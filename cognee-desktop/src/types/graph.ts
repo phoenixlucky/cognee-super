@@ -1,0 +1,1 @@
+export interface GraphDto { nodes: {id:string;label:string;position:{x:number;y:number};data:Record<string,unknown>}[]; edges: {id:string;source:string;target:string;label?:string}[]; truncated:boolean }

@@ -1,0 +1,62 @@
+name: Cognee Desktop Windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'cognee-desktop/**'
+      - 'cognee-mcp/**'
+      - '.github/workflows/cognee-desktop-windows.yml'
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cognee-desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install locked frontend dependencies
+        working-directory: cognee-desktop
+        run: npm ci
+      - name: Verify bundled uv
+        working-directory: cognee-desktop
+        shell: pwsh
+        run: ./scripts/fetch-uv.ps1
+      - name: Prepare locked Cognee MCP runtime source
+        working-directory: cognee-desktop
+        shell: pwsh
+        run: ./scripts/package-runtime.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
+      - name: Frontend checks
+        working-directory: cognee-desktop
+        run: |
+          npm run typecheck
+          npm run test:unit
+          npm run build
+      - name: Rust checks
+        working-directory: cognee-desktop
+        run: |
+          cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --test secrets
+      - name: Build NSIS installer
+        working-directory: cognee-desktop
+        run: npm run tauri:build -- --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Sign installer when credentials are configured
+        shell: pwsh
+        env:
+          COGNEE_SIGNING_CERT_BASE64: ${{ secrets.COGNEE_SIGNING_CERT_BASE64 }}
+          COGNEE_SIGNING_CERT_PASSWORD: ${{ secrets.COGNEE_SIGNING_CERT_PASSWORD }}
+        run: |
+          $installer = Get-ChildItem cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated' }
+          ./cognee-desktop/scripts/sign-installer.ps1 -InstallerPath $installer.FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cognee-desktop-windows-x64
+          path: cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cognee Desktop",
+  "version": "0.1.0",
+  "identifier": "com.cognee.local.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "Cognee 桌面记忆库", "width": 1260, "height": 860, "minWidth": 960, "minHeight": 680, "resizable": true }],
+    "security": { "csp": "default-src 'self' asset: http://asset.localhost; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline' font-src 'self' data: connect-src ipc: http://ipc.localhost http://127.0.0.1:* https://127.0.0.1:*" }
+  },
+  "bundle": { "active": true, "targets": ["nsis"], "category": "Productivity", "shortDescription": "Cognee 本地记忆管理", "longDescription": "Cognee 本地记忆与 MCP 桌面客户端", "icon": ["icons/icon.ico"], "resources": { "../resources/uv/uv.exe": "uv.exe", "../runtime/pyproject.toml": "runtime/pyproject.toml", "../runtime/uv.lock": "runtime/uv.lock", "../runtime/README.md": "runtime/README.md", "../runtime/Cognee-LICENSE": "runtime/Cognee-LICENSE", "../runtime/src": "runtime/src" }, "windows": { "nsis": { "displayLanguageSelector": false, "installMode": "currentUser" } } }
+}

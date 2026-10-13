@@ -234,3 +234,15 @@ pr_body.md
 cognee/tests/e2e/keyless/.keyless_run/
 cognee/tests/e2e/keyless/.chunk_budget_run/
 cognee/tests/e2e/keyless/.crash_run/
+
+# Cognee desktop generated build and bootstrap artifacts
+cognee-desktop/node_modules/
+cognee-desktop/dist/
+cognee-desktop/src-tauri/target/
+cognee-desktop/packages/
+cognee-desktop/resources/uv/uv.exe
+cognee-desktop/runtime/.venv/
+cognee-desktop/runtime/.python-version
+cognee-desktop/runtime/src/
+cognee-desktop/src-tauri/gen/schemas/
+cognee-desktop/resources/packages/
