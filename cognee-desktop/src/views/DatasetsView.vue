@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { FilePlus2, FolderOpen, RotateCw, Trash2 } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
+import { useAppStore } from '../stores/app'
 import { useMemoryStore } from '../stores/memory'
 
+const app = useAppStore()
 const memory = useMemoryStore()
-onMounted(() => memory.loadDatasets())
+onMounted(async () => {
+  await app.refreshStatus()
+  await memory.loadDatasets()
+})
 function formatSize(value?: number | null) {
   if (value == null) return '—'
   if (value < 1024) return `${value} B`
@@ -16,16 +22,17 @@ function formatSize(value?: number | null) {
 <template>
   <div class="page-heading">
     <div><div class="eyebrow">数据集与来源</div><h1>记忆文件</h1><p>管理进入 Cognee 的原始文件与已处理的数据集。</p></div>
-    <div class="heading-actions"><button class="button button-quiet" @click="memory.loadDatasets"><RotateCw :size="14"/>刷新</button><button class="button button-primary" @click="memory.createDataset"><FilePlus2 :size="15"/>新建数据集</button></div>
+    <div class="heading-actions"><button class="button button-quiet" :disabled="app.apiStatus !== 'running'" @click="memory.loadDatasets"><RotateCw :size="14"/>刷新</button><button class="button button-primary" :disabled="app.apiStatus !== 'running'" @click="memory.createDataset"><FilePlus2 :size="15"/>新建数据集</button></div>
   </div>
-  <div v-if="memory.error" class="alert-banner"><span>{{ memory.error }}</span></div>
+  <div v-if="app.apiStatus !== 'running'" class="alert-banner"><span>Cognee API 尚未启动。启动服务后才能刷新或新建数据集。</span><RouterLink class="text-link" to="/">前往工作台启动</RouterLink></div>
+  <div v-if="memory.error && app.apiStatus === 'running'" class="alert-banner"><span>{{ memory.error }}</span></div>
   <article class="surface content-card">
     <div class="content-toolbar"><h2>数据集 <span class="muted">{{ memory.datasets.length }} 个</span></h2></div>
     <el-table v-if="memory.datasets.length" :data="memory.datasets" stripe v-loading="memory.loading" @row-click="memory.selectDataset">
       <el-table-column prop="name" label="名称"/><el-table-column prop="id" label="ID" min-width="210"/><el-table-column prop="createdAt" label="创建时间"/>
       <el-table-column label="操作" width="90"><template #default="{row}"><button class="link-button" @click.stop="memory.deleteDataset(row)"><Trash2 :size="14"/> 删除</button></template></el-table-column>
     </el-table>
-    <div v-else class="empty-state"><div class="empty-icon"><FolderOpen :size="22"/></div><strong>{{ memory.loading ? '正在读取数据集…' : '还没有数据集' }}</strong><p>新建数据集后，导入来源文件并构建可检索的图谱记忆。</p><button class="button button-primary" @click="memory.createDataset"><FilePlus2 :size="14"/>新建第一个数据集</button></div>
+    <div v-else class="empty-state"><div class="empty-icon"><FolderOpen :size="22"/></div><strong>{{ memory.loading ? '正在读取数据集…' : '还没有数据集' }}</strong><p>新建数据集后，导入来源文件并构建可检索的图谱记忆。</p><button class="button button-primary" :disabled="app.apiStatus !== 'running'" @click="memory.createDataset"><FilePlus2 :size="14"/>新建第一个数据集</button></div>
   </article>
   <article v-if="memory.selected" class="surface content-card" style="margin-top:15px">
     <div class="content-toolbar">

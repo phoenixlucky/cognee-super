@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAppStore } from './app'
 import type { Dataset, DataRecord } from '../types/memory'
 
 interface DatasetProgress { status: 'idle' | 'running' | 'completed' | 'failed'; completedItems?: number | null; totalItems?: number | null; currentStage?: string | null }
@@ -9,7 +10,13 @@ const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 export const useMemoryStore = defineStore('memory', {
   state: () => ({ datasets: [] as Dataset[], records: [] as DataRecord[], selected: null as Dataset | null, loading: false, building: false, progress: { status: 'idle' } as DatasetProgress, error: '' }),
   actions: {
+    requireApi() {
+      if (useAppStore().apiStatus === 'running') return true
+      this.error = 'Cognee API 尚未启动。请先到工作台启动本地服务。'
+      return false
+    },
     async loadDatasets() {
+      if (!this.requireApi()) return
       this.loading = true
       this.error = ''
       try { this.datasets = await invoke<Dataset[]>('list_datasets') }
@@ -32,6 +39,7 @@ export const useMemoryStore = defineStore('memory', {
       catch (error) { this.error = String(error) }
     },
     async createDataset() {
+      if (!this.requireApi()) return
       try {
         const { value } = await ElMessageBox.prompt('为新的记忆集合命名', '新建数据集', { inputPlaceholder: '例如：项目文档' })
         await invoke('create_dataset', { name: value })
