@@ -368,9 +368,13 @@ For the FastMCP 4 protocol endpoint, start with `TRANSPORT_MODE=http-new` in Doc
 Use `HTTP_PORT` or `--port` to change the port, and `HTTP_PATH` or `--path` to change the
 `/mcp-new` route. The older standalone `http` mode remains at `/mcp` on port `8000` by default.
 
-The server negotiates protocol versions per client: FastMCP 4 clients can use MCP protocol
-`2026-07-28`, and older clients continue to negotiate a protocol revision they support. The
-server does not enable the optional MCP Tasks extension.
+FastMCP 4 serves both protocol generations on the same handler. Modern `2026-07-28` requests
+are stateless: each request carries `io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta`, and clients use
+`MCP-Protocol-Version` as the matching HTTP header. They discover the server with
+`server/discover` instead of an initialize handshake and do not receive a session ID. Older
+clients continue using the initialize/session flow, including protocol `2025-11-25`. The server
+does not enable the optional MCP Tasks extension.
 
 **Start the server with HTTP transport:**
 ```bash
@@ -527,6 +531,11 @@ docker run \
 **Command-line arguments for API mode:**
 - `--api-url`: Base URL of the running Cognee FastAPI server (e.g., `http://localhost:8000`)
 - `--api-token`: Authentication token for the API (optional, required if API has authentication enabled)
+- `--api-auth-scheme`: `bearer` or `x-api-key` (defaults to bearer for local APIs and X-Api-Key for tenant URLs)
+
+The corresponding environment variables are `COGNEE_BASE_URL`, `COGNEE_API_KEY`, and
+`COGNEE_API_AUTH_SCHEME`. `COGNEE_API_AUTH_SCHEME=x-api-key` sends the key in the `X-Api-Key`
+header; the default local API scheme sends it as a bearer token.
 
 **Docker environment variables for API mode:**
 - `API_URL`: Base URL of the running Cognee FastAPI server

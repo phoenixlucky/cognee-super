@@ -134,7 +134,7 @@ Expose provider/model settings, data directory location, port, and startup behav
 
 1. A clean Windows x64 machine can install the application, complete first-run runtime setup, and start the local Cognee API and MCP services without requiring a preinstalled Python environment.
 2. The dashboard reports accurate API/MCP state and exposes recent redacted logs.
-3. The MCP client can initialize and call tools through stateless `/mcp-new`; an older supported MCP client can continue using `/mcp`; stdio and SSE still start.
+3. A modern MCP client can call `server/discover`, list tools, and call a tool through `/mcp-new` using the `2026-07-28` per-request metadata without an initialize handshake or session header. An older supported client can use the initialize/session flow through `/mcp`; stdio and SSE still start.
 4. The UI can list datasets, browse source records, retrieve/download a source file, delete a selected record, and browse graph memory through supported API endpoints.
 5. The UI can list and filter session records and open supported session details.
 6. Service listeners bind to loopback by default; protected API credentials and provider secrets do not appear in plaintext config, process arguments, logs, or UI read-back.

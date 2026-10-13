@@ -110,11 +110,22 @@ def _run_entrypoint(sandbox, user_args: list[str], extra_env: dict[str, str]) ->
         open(stdout_file, "w", encoding="utf-8") as out,
         open(stderr_file, "w", encoding="utf-8") as err,
     ):
-        entrypoint_arg = (
-            str(ENTRYPOINT) if _find_bash().lower().endswith("bash.cmd") else _path_for_bash(ENTRYPOINT)
-        )
+        if _uses_wsl_bash():
+            command = [
+                "wsl.exe",
+                "env",
+                f"TRANSPORT_MODE={env.get('TRANSPORT_MODE', '')}",
+                f"HTTP_PORT={env.get('HTTP_PORT', '')}",
+                f"HTTP_PATH={env.get('HTTP_PATH', '')}",
+                f"PATH={_path_for_bash(out_file.parent / 'bin')}:/usr/bin:/bin",
+                "bash",
+                _path_for_bash(ENTRYPOINT),
+                *user_args,
+            ]
+        else:
+            command = [_find_bash(), str(ENTRYPOINT), *user_args]
         proc = subprocess.run(
-            [_find_bash(), entrypoint_arg, *user_args],
+            command,
             env=env,
             check=False,
             timeout=120,

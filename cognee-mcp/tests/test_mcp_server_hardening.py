@@ -169,7 +169,7 @@ def _multipart_filenames(request: httpx.Request) -> list[str]:
 @pytest.mark.asyncio
 async def test_cognee_client_api_add_uploads_file_path_under_original_basename(tmp_path):
     upload = tmp_path / "meeting-notes.md"
-    upload.write_text("# Meeting notes\nagenda item", encoding="utf-8")
+    upload.write_text("# Meeting notes\nagenda item", encoding="utf-8", newline="\n")
     requests: list[httpx.Request] = []
     client = await _mock_api_client(requests)
 
@@ -663,7 +663,11 @@ async def test_mcp_remember_defaults_dataset_when_caller_omits_it(monkeypatch):
 
     fake_client = RecordingRememberClient()
     monkeypatch.setattr(server, "cognee_client", fake_client)
-    monkeypatch.setattr(server, "_agent_scoped_default_dataset", lambda: "cursor_vscode_memory")
+    monkeypatch.setattr(
+        server,
+        "_agent_scoped_default_dataset",
+        lambda context=None: "cursor_vscode_memory",
+    )
 
     await server.remember(filename="n.md", content_base64=base64.b64encode(b"hi").decode("ascii"))
 

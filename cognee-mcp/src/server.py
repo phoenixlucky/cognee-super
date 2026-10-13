@@ -12,7 +12,7 @@ from typing import Literal
 
 import fastmcp
 import uvicorn
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.server.http import HostOriginGuardMiddleware
 from fastmcp.server.transforms.search import BM25SearchTransform
 from fastmcp.server.transforms.search.base import BaseSearchTransform
@@ -266,6 +266,21 @@ def _get_cors_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+class _ExactPathASGI:
+    """Adapt a root-path ASGI app to an exact route without a slash redirect."""
+
+    def __init__(self, app, mount_path: str):
+        self.app = app
+        self.mount_path = mount_path
+
+    async def __call__(self, scope, receive, send):
+        child_scope = dict(scope)
+        child_scope["root_path"] = f"{scope.get('root_path', '')}{self.mount_path}"
+        child_scope["path"] = "/"
+        child_scope["raw_path"] = b"/"
+        await self.app(child_scope, receive, send)
+
+
 def _build_http_app(transport: str, host: str, path: str | None = None):
     """Build the ASGI app for an HTTP-family transport, guard and CORS included.
 
@@ -376,7 +391,9 @@ def _build_http_server_app(
     return Starlette(
         routes=[
             Route("/health", health_check, methods=["GET"]),
+            Route(path, _ExactPathASGI(streamable_app, path)),
             Mount(path, app=streamable_app),
+            Route("/mcp", _ExactPathASGI(streamable_app, "/mcp")),
             Mount("/mcp", app=streamable_app),
         ],
         middleware=middleware,
@@ -434,6 +451,7 @@ async def remember(
     background: bool = False,
     ontology_key: str | list[str] | None = None,
     self_improvement: bool = True,
+    ctx: Context | None = None,
 ) -> list:
     """Store data in memory.
 
@@ -524,7 +542,7 @@ async def remember(
                 )
             ]
 
-    dataset_name = dataset_name or _agent_scoped_default_dataset()
+    dataset_name = dataset_name or _agent_scoped_default_dataset(ctx)
 
     # Permanent-memory ingestion runs add + cognify (+ improve), which routinely
     # outruns an MCP host's per-request deadline — the same constraint the
@@ -864,6 +882,7 @@ async def improve(
     node_name: str | None = None,
     build_global_context_index: bool = False,
     build_truth_subspace: bool = False,
+    ctx: Context | None = None,
 ) -> list:
     """Run the self-improvement loop over a dataset and report what each stage did.
 
@@ -899,7 +918,7 @@ async def improve(
         Also build the truth subspace from the sessions' distilled learnings
         (needs session_ids and a graph backend with truth state).
     """
-    dataset_name = dataset_name or _agent_scoped_default_dataset()
+    dataset_name = dataset_name or _agent_scoped_default_dataset(ctx)
     with redirect_stdout(sys.stderr):
         try:
             session_list = parse_csv_list(session_ids)
@@ -969,6 +988,7 @@ def format_improve_result(result, dataset_name: str) -> str:
 async def cognify_status(
     dataset_name: str | None = None,
     pipelines: list[str] | None = None,
+    ctx: Context | None = None,
 ) -> list:
     """
     Get the current status of selected pipelines.
@@ -994,7 +1014,7 @@ async def cognify_status(
     - In API mode the dataset id is resolved over HTTP and status is read
       from the server's `GET /api/v1/datasets/status` endpoint
     """
-    dataset_name = dataset_name or _agent_scoped_default_dataset()
+    dataset_name = dataset_name or _agent_scoped_default_dataset(ctx)
     with redirect_stdout(sys.stderr):
         try:
             if cognee_client.use_api:
@@ -1080,7 +1100,7 @@ def _is_agent_scoping_enabled() -> bool:
     return os.getenv("COGNEE_MCP_AGENT_SCOPED", "true").strip().lower() != "false"
 
 
-def _agent_scoped_default_dataset() -> str:
+def _agent_scoped_default_dataset(context: Context | None = None) -> str:
     """Return the default dataset for the current MCP request.
 
     With agent scoping enabled (default), reads clientInfo.name from the
@@ -1096,14 +1116,25 @@ def _agent_scoped_default_dataset() -> str:
     if not _is_agent_scoping_enabled():
         return "main_dataset"
 
-    from mcp.server.lowlevel.server import request_ctx
-
     try:
-        ctx = request_ctx.get()
-        params = getattr(ctx.session, "client_params", None)
-        if params and params.clientInfo and params.clientInfo.name:
-            return f"{_sanitize_client_name(params.clientInfo.name)}_memory"
-    except LookupError:
+        if context is None:
+            from fastmcp.server.dependencies import get_context
+
+            context = get_context()
+        request_context = context.request_context
+        if request_context is None:
+            return "main_dataset"
+
+        client_info = (request_context.meta or {}).get(
+            "io.modelcontextprotocol/clientInfo"
+        )
+        if isinstance(client_info, dict) and client_info.get("name"):
+            return f"{_sanitize_client_name(client_info['name'])}_memory"
+
+        params = getattr(request_context.session, "client_params", None)
+        if params and params.client_info and params.client_info.name:
+            return f"{_sanitize_client_name(params.client_info.name)}_memory"
+    except (LookupError, RuntimeError):
         pass
     return "main_dataset"
 
