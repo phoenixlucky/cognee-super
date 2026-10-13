@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
@@ -55,7 +56,22 @@ fn status(state: &AppState) -> Result<StatusDto, AppError> {
             .lock()
             .map_err(|_| AppError::Config("Status unavailable".into()))?,
         config: config_snapshot(state)?,
+        active_work: state.active_work.load(std::sync::atomic::Ordering::Acquire) > 0,
     })
+}
+struct ActiveWorkGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl ActiveWorkGuard {
+    fn new(state: &AppState) -> Self {
+        state
+            .active_work
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self(state.active_work.clone())
+    }
+}
+impl Drop for ActiveWorkGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 fn append_log_file(path: &Path, line: &str) {
     if let Some(parent) = path.parent() {
@@ -458,6 +474,7 @@ pub async fn prepare_runtime(
         python
             .args(["python", "install", "3.12.10", "--install-dir"])
             .arg(&python_dir)
+            .arg("--no-bin")
             .env("UV_PYTHON_INSTALL_DIR", &python_dir)
             .env("UV_CACHE_DIR", &cache)
             .current_dir(&runtime);
@@ -472,7 +489,7 @@ pub async fn prepare_runtime(
             json!({"phase":"dependencies","percent":42,"message":"正在同步已锁定的 Cognee 依赖"}),
         );
         let mut sync = Command::new(&uv);
-        sync.args(["sync", "--locked", "--project"])
+        sync.args(["sync", "--locked", "--no-dev", "--project"])
             .arg(project)
             .arg("--python")
             .arg("3.12.10")
@@ -625,6 +642,7 @@ pub async fn start_api(
         .env("DATA_ROOT_DIRECTORY", root.join("data"))
         .env("SYSTEM_ROOT_DIRECTORY", root.join("system"))
         .env("CACHE_ROOT_DIRECTORY", root.join("cache"))
+        .env("FASTEMBED_CACHE_PATH", root.join("cache").join("fastembed"))
         .env("COGNEE_LOGS_DIR", root.join("logs"))
         .env("COGNEE_REPOS_DIR", root.join("repos"));
     let provider_settings = provider_env(&c);
@@ -698,7 +716,9 @@ pub async fn start_api(
 
 async fn bearer_token(c: &AppConfig) -> Result<String, AppError> {
     let (email, password) = ensure_default_credentials().await?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()?;
     let response = client
         .post(format!("{}/api/v1/auth/login", api_url(c)))
         .form(&[
@@ -712,7 +732,7 @@ async fn bearer_token(c: &AppConfig) -> Result<String, AppError> {
             "Local Cognee authentication failed; restart the API to recover credentials".into(),
         ));
     }
-    let body: Value = response.json().await?;
+    let body: Value = response_json(response, 1024 * 1024).await?;
     body.get("access_token")
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -720,7 +740,9 @@ async fn bearer_token(c: &AppConfig) -> Result<String, AppError> {
 }
 async fn ensure_mcp_key(c: &AppConfig) -> Result<String, AppError> {
     if let Some(key) = secrets::get_secret("local.mcp_api_key")? {
-        let r = reqwest::Client::new()
+        let r = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?
             .get(format!("{}/api/v1/auth/me", api_url(c)))
             .header("x-api-key", &key)
             .send()
@@ -730,7 +752,9 @@ async fn ensure_mcp_key(c: &AppConfig) -> Result<String, AppError> {
         }
     }
     let token = bearer_token(c).await?;
-    let r = reqwest::Client::new()
+    let r = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()?
         .post(format!("{}/api/v1/auth/api-keys", api_url(c)))
         .bearer_auth(token)
         .json(&json!({"name":"Cognee Desktop MCP"}))
@@ -741,7 +765,7 @@ async fn ensure_mcp_key(c: &AppConfig) -> Result<String, AppError> {
             "Could not create a protected MCP API key".into(),
         ));
     }
-    let v: Value = r.json().await?;
+    let v: Value = response_json(r, 1024 * 1024).await?;
     let key = v
         .get("key")
         .and_then(Value::as_str)
@@ -904,7 +928,9 @@ pub async fn list_mcp_tools(
         AppError::Message("MCP API key is unavailable; start the MCP service first".into())
     })?;
     let req = json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"protocolVersion":"2026-07-28","clientInfo":{"name":"cognee-desktop","version":"0.1.0"},"capabilities":{}}}});
-    let r = reqwest::Client::new()
+    let r = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?
         .post(format!("http://127.0.0.1:{}/mcp-new", c.mcp_port))
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
@@ -912,7 +938,13 @@ pub async fn list_mcp_tools(
         .json(&req)
         .send()
         .await?;
-    let t = r.text().await?;
+    if !r.status().is_success() {
+        return Err(AppError::Message(format!(
+            "MCP tools request returned HTTP {}",
+            r.status().as_u16()
+        )));
+    }
+    let t = String::from_utf8_lossy(&bounded_body(r, 5 * 1024 * 1024).await?).to_string();
     let body = t
         .lines()
         .find(|l| l.starts_with("data: "))
@@ -955,6 +987,7 @@ pub struct DataDto {
     id: String,
     name: String,
     file_type: String,
+    size: Option<u64>,
     created_at: String,
 }
 async fn api_request(
@@ -965,7 +998,9 @@ async fn api_request(
 ) -> Result<Value, AppError> {
     let c = config_snapshot(state)?;
     let token = bearer_token(&c).await?;
-    let mut req = reqwest::Client::new()
+    let mut req = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?
         .request(method, format!("{}{}", api_url(&c), path))
         .bearer_auth(token);
     if let Some(v) = body {
@@ -981,7 +1016,33 @@ async fn api_request(
     if r.status() == reqwest::StatusCode::NO_CONTENT {
         return Ok(Value::Null);
     }
-    r.json().await.map_err(AppError::from)
+    response_json(r, 10 * 1024 * 1024).await
+}
+async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, AppError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(AppError::Message(
+            "Cognee response exceeds the desktop safety limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = futures_util::StreamExt::next(&mut stream).await {
+        let chunk = chunk.map_err(AppError::from)?;
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(AppError::Message(
+                "Cognee response exceeds the desktop safety limit".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+async fn response_json(response: reqwest::Response, limit: usize) -> Result<Value, AppError> {
+    serde_json::from_slice(&bounded_body(response, limit).await?)
+        .map_err(|_| AppError::Message("Cognee returned invalid JSON".into()))
 }
 fn value_array(v: Value) -> Vec<Value> {
     v.as_array()
@@ -1078,6 +1139,7 @@ pub async fn list_data(
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .into(),
+                size: v.get("data_size").and_then(Value::as_u64),
                 created_at: v
                     .get("created_at")
                     .and_then(Value::as_str)
@@ -1107,49 +1169,187 @@ pub async fn delete_data(
 }
 #[tauri::command]
 pub async fn upload_source(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     dataset_id: String,
-    path: String,
 ) -> Result<(), AppError> {
     let id =
         Uuid::parse_str(&dataset_id).map_err(|_| AppError::Config("Invalid dataset id".into()))?;
-    let p = PathBuf::from(path);
-    if !p.is_file() {
-        return Err(AppError::Config(
-            "Selected source file does not exist".into(),
-        ));
+    let selected = app
+        .dialog()
+        .file()
+        .blocking_pick_files()
+        .unwrap_or_default();
+    if selected.is_empty() {
+        return Ok(());
     }
+    let _active_work = ActiveWorkGuard::new(&state);
     let c = config_snapshot(&state)?;
     let token = bearer_token(&c).await?;
-    let part = reqwest::multipart::Part::file(&p)
-        .await
-        .map_err(|_| AppError::Config("Cannot read the selected source file".into()))?;
-    let form = reqwest::multipart::Form::new()
-        .text("datasetId", id.to_string())
-        .part("data", part);
-    let r = reqwest::Client::new()
-        .post(format!("{}/api/v1/add", api_url(&c)))
-        .bearer_auth(token)
-        .multipart(form)
-        .send()
-        .await?;
-    if !r.status().is_success() {
-        return Err(AppError::Message(format!(
-            "Cognee upload returned HTTP {}",
-            r.status().as_u16()
-        )));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()?;
+    for selected_path in selected {
+        let path = selected_path
+            .into_path()
+            .map_err(|_| AppError::Config("Cannot access the selected source file".into()))?;
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| AppError::Config("Cannot read the selected source file".into()))?;
+        if !metadata.is_file() || metadata.len() > 200 * 1024 * 1024 {
+            return Err(AppError::Config(
+                "Select regular files no larger than 200 MB".into(),
+            ));
+        }
+        let part = reqwest::multipart::Part::file(&path)
+            .await
+            .map_err(|_| AppError::Config("Cannot read the selected source file".into()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("datasetId", id.to_string())
+            .part("data", part);
+        let response = client
+            .post(format!("{}/api/v1/add", api_url(&c)))
+            .bearer_auth(&token)
+            .multipart(form)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(AppError::Message(format!(
+                "Cognee upload returned HTTP {}",
+                response.status().as_u16()
+            )));
+        }
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn cognify_dataset(
+    state: tauri::State<'_, AppState>,
+    dataset_id: String,
+) -> Result<(), AppError> {
+    let id =
+        Uuid::parse_str(&dataset_id).map_err(|_| AppError::Config("Invalid dataset id".into()))?;
+    let _active_work = ActiveWorkGuard::new(&state);
+    let config = config_snapshot(&state)?;
+    let token = bearer_token(&config).await?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60 * 60))
+        .build()?
+        .post(format!("{}/api/v1/cognify", api_url(&config)))
+        .bearer_auth(token)
+        .json(&json!({"dataset_ids":[id],"run_in_background":false}))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(AppError::Message(format!(
+            "Cognee memory build returned HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    let _ = response_json(response, 10 * 1024 * 1024).await?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetProgressDto {
+    status: String,
+    completed_items: Option<usize>,
+    total_items: Option<usize>,
+    current_stage: Option<String>,
+}
+#[tauri::command]
+pub async fn get_dataset_progress(
+    state: tauri::State<'_, AppState>,
+    dataset_id: String,
+) -> Result<DatasetProgressDto, AppError> {
+    let id =
+        Uuid::parse_str(&dataset_id).map_err(|_| AppError::Config("Invalid dataset id".into()))?;
+    let path = format!("/api/v1/datasets/status/progress?dataset={id}&pipeline=cognify_pipeline");
+    let value = api_request(&state, reqwest::Method::GET, &path, None).await?;
+    let dataset_key = id.to_string();
+    let run = value.get(dataset_key.as_str()).unwrap_or(&Value::Null);
+    let raw_status = run.get("status").and_then(Value::as_str).unwrap_or("idle");
+    let status = match raw_status {
+        "PipelineRunStarted"
+        | "PipelineRunProgress"
+        | "PipelineRunYield"
+        | "pending"
+        | "running"
+        | "DATASET_PROCESSING_INITIATED"
+        | "DATASET_PROCESSING_STARTED" => "running",
+        "PipelineRunCompleted"
+        | "PipelineRunAlreadyCompleted"
+        | "completed"
+        | "DATASET_PROCESSING_COMPLETED" => "completed",
+        "PipelineRunErrored" | "failed" | "DATASET_PROCESSING_ERRORED" => "failed",
+        _ => "idle",
+    }
+    .to_string();
+    let progress = run
+        .get("progress")
+        .filter(|value| !value.is_null())
+        .unwrap_or(run);
+    Ok(DatasetProgressDto {
+        status,
+        completed_items: progress
+            .get("completed_items")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize),
+        total_items: progress
+            .get("total_items")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize),
+        current_stage: progress
+            .get("current_stage")
+            .and_then(Value::as_str)
+            .map(|v| v.chars().take(120).collect()),
+    })
+}
 #[tauri::command]
 pub async fn download_raw(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     dataset_id: String,
     data_id: String,
-) -> Result<String, AppError> {
+    filename: String,
+) -> Result<Option<String>, AppError> {
     let d =
         Uuid::parse_str(&dataset_id).map_err(|_| AppError::Config("Invalid dataset id".into()))?;
     let id = Uuid::parse_str(&data_id).map_err(|_| AppError::Config("Invalid data id".into()))?;
+    let safe_name = Path::new(&filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("cognee-source.download")
+        .chars()
+        .filter(|character| {
+            !character.is_control()
+                && !matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+        })
+        .take(150)
+        .collect::<String>();
+    let selected_path = app
+        .dialog()
+        .file()
+        .set_file_name(if safe_name.is_empty() {
+            "cognee-source.download"
+        } else {
+            &safe_name
+        })
+        .blocking_save_file();
+    let Some(selected_path) = selected_path else {
+        return Ok(None);
+    };
+    let destination = selected_path
+        .into_path()
+        .map_err(|_| AppError::Config("Cannot access the selected destination".into()))?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| AppError::Config("Choose a valid destination folder".into()))?;
     let c = config_snapshot(&state)?;
     let token = bearer_token(&c).await?;
     let r = reqwest::Client::new()
@@ -1163,21 +1363,18 @@ pub async fn download_raw(
             r.status().as_u16()
         )));
     }
-    let data = state
-        .runtime_path
-        .lock()
-        .map_err(|_| AppError::Config("Data path unavailable".into()))?
-        .as_ref()
-        .and_then(|p| p.parent())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| AppError::Config("App has not initialized".into()))?;
-    let dir = data.join("downloads");
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|_| AppError::Config("Cannot create download directory".into()))?;
-    let path = dir.join(format!("{id}.download"));
-    let temp = dir.join(format!("{id}.download.tmp"));
-    let mut file = tokio::fs::File::create(&temp)
+    if r.content_length()
+        .is_some_and(|length| length > 200 * 1024 * 1024)
+    {
+        return Err(AppError::Message(
+            "Downloaded file exceeds 200 MB limit".into(),
+        ));
+    }
+    let temp = parent.join(format!(".cognee-{id}.partial"));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
         .await
         .map_err(|_| AppError::Config("Cannot create temporary download".into()))?;
     let mut stream = r.bytes_stream();
@@ -1196,10 +1393,15 @@ pub async fn download_raw(
             .map_err(|_| AppError::Config("Cannot write downloaded source".into()))?;
     }
     drop(file);
-    tokio::fs::rename(&temp, &path)
+    if tokio::fs::try_exists(&destination).await.unwrap_or(false) {
+        tokio::fs::remove_file(&destination)
+            .await
+            .map_err(|_| AppError::Config("Cannot replace the selected destination".into()))?;
+    }
+    tokio::fs::rename(&temp, &destination)
         .await
         .map_err(|_| AppError::Config("Cannot finalize downloaded source".into()))?;
-    Ok(path.to_string_lossy().to_string())
+    Ok(Some(destination.to_string_lossy().to_string()))
 }
 #[tauri::command]
 pub async fn preview_raw(
@@ -1239,12 +1441,9 @@ pub async fn preview_raw(
             "Preview is limited to 1 MB; download the file instead".into(),
         ));
     }
-    let b = r.bytes().await?;
-    if b.len() > 1024 * 1024 {
-        return Err(AppError::Message(
-            "Preview is limited to 1 MB; download the file instead".into(),
-        ));
-    }
+    let b = bounded_body(r, 1024 * 1024).await.map_err(|_| {
+        AppError::Message("Preview is limited to 1 MB; download the file instead".into())
+    })?;
     Ok(String::from_utf8_lossy(&b).to_string())
 }
 #[derive(Serialize)]
@@ -1267,6 +1466,9 @@ pub async fn get_graph(
     let mut path = format!("/api/v1/visualize/json?dataset_id={d}&full=false&max_nodes={cap}");
     if let Some(q) = query {
         if !q.trim().is_empty() {
+            if q.chars().count() > 2000 {
+                return Err(AppError::Config("Graph search is limited to 2,000 characters".into()));
+            }
             path.push_str("&query=");
             path.push_str(&url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>());
         }
@@ -1296,6 +1498,13 @@ pub struct SessionDto {
     status: String,
     updated_at: String,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPageDto {
+    items: Vec<SessionDto>,
+    total: u64,
+    has_more: bool,
+}
 #[tauri::command]
 pub async fn list_sessions(
     state: tauri::State<'_, AppState>,
@@ -1303,7 +1512,7 @@ pub async fn list_sessions(
     status: Option<String>,
     limit: u16,
     offset: u32,
-) -> Result<Vec<SessionDto>, AppError> {
+) -> Result<SessionPageDto, AppError> {
     let range = if ["24h", "7d", "30d", "all"].contains(&range.as_str()) {
         range
     } else {
@@ -1319,7 +1528,11 @@ pub async fn list_sessions(
         path.push_str(&url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>());
     }
     let v = api_request(&state, reqwest::Method::GET, &path, None).await?;
-    Ok(value_array(v)
+    let items = v
+        .get("sessions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
         .iter()
         .map(|v| SessionDto {
             session_id: v
@@ -1348,7 +1561,12 @@ pub async fn list_sessions(
                 .unwrap_or("")
                 .into(),
         })
-        .collect())
+        .collect();
+    Ok(SessionPageDto {
+        items,
+        total: v.get("total").and_then(Value::as_u64).unwrap_or(0),
+        has_more: v.get("has_more").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1365,8 +1583,11 @@ pub async fn get_session(
     state: tauri::State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionDetailDto, AppError> {
+    if session_id.is_empty() || session_id.chars().count() > 200 || session_id.chars().any(char::is_control) {
+        return Err(AppError::Config("Invalid session id".into()));
+    }
     let id =
-        Uuid::parse_str(&session_id).map_err(|_| AppError::Config("Invalid session id".into()))?;
+        url::form_urlencoded::byte_serialize(session_id.as_bytes()).collect::<String>();
     let v = api_request(
         &state,
         reqwest::Method::GET,

@@ -24,4 +24,15 @@ describe('app status', () => {
     expect(config).not.toContain('temporary-write-only-value')
     expect(app.secrets.llm).toBe(false)
   })
+
+  it('preserves unsaved settings while periodic service status refreshes', () => {
+    const app = useAppStore()
+    app.configLoaded = true
+    app.config.apiPort = 12345
+    app.applyStatus({
+      apiStatus: 'running', mcpStatus: 'stopped', runtimeStatus: 'ready', activeWork: false,
+      config: { ...app.config, apiPort: 12315 },
+    })
+    expect(app.config.apiPort).toBe(12345)
+  })
 })

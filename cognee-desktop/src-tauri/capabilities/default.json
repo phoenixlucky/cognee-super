@@ -3,5 +3,5 @@
   "identifier": "main-capability",
   "description": "Explicit desktop window access",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
 }

@@ -55,6 +55,7 @@ pub struct AppState {
     pub log_path: Mutex<Option<PathBuf>>,
     pub config_path: Mutex<Option<PathBuf>>,
     pub runtime_path: Mutex<Option<PathBuf>>,
+    pub active_work: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Default for AppState {
     fn default() -> Self {
@@ -69,6 +70,7 @@ impl Default for AppState {
             log_path: Mutex::new(None),
             config_path: Mutex::new(None),
             runtime_path: Mutex::new(None),
+            active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 }
@@ -79,4 +81,5 @@ pub struct StatusDto {
     pub mcp_status: RunState,
     pub runtime_status: RuntimeState,
     pub config: AppConfig,
+    pub active_work: bool,
 }

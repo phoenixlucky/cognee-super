@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { ArrowUpRight, Brain, Check, ChevronRight, CircleAlert, Copy, FileText, LoaderCircle, Play, Radio, RotateCw, Square, Workflow } from '@lucide/vue'
+import { Activity, ArrowUpRight, Brain, Check, ChevronRight, CircleAlert, Copy, FileText, LoaderCircle, Play, Radio, RotateCw, Square, Workflow } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { useMemoryStore } from '../stores/memory'
 

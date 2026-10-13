@@ -32,7 +32,7 @@ Build the Windows x64 NSIS installer with `npm run tauri:build`. The packaging s
 
 The installer bundles the Tauri application, the Cognee MCP source snapshot, its checked-in `uv.lock`, and uv 0.11.19. It does not bundle Python or the Python wheels. On first setup, uv installs CPython 3.12.10 into Cognee Desktop's app-data directory and runs `uv sync --locked` there. This keeps Python packages out of system Python and the user's PATH.
 
-First setup needs network access to the Astral uv/Python distribution and the Python package index. The lock resolves 322 package records across supported platforms. As a Windows x64 planning estimate, the current MCP development environment occupies about 2.28 GiB; production runtime size varies with the selected wheels and excludes development-only packages. Keep several GiB free for first setup and its download cache. Runtime cache files stay under app data and can be removed after a successful setup if disk space is needed.
+First setup needs network access to the Astral uv/Python distribution and the Python package index. The lock resolves 322 package records across supported platforms. Runtime sync excludes the project's development group. As a Windows x64 planning estimate, the current MCP development environment occupies about 2.28 GiB; production runtime size varies with the selected wheels. Keep several GiB free for first setup and its download cache. Runtime cache files stay under app data and can be removed after a successful setup if disk space is needed. Python is installed without creating executable shims in the user's PATH.
 
 Python, the virtual environment, Cognee data, config, downloads, and logs are stored under the Tauri app-data directory. The default listeners are:
 
@@ -46,7 +46,7 @@ Ingestion may need an LLM provider. Local embedding support is included by Cogne
 
 ## Memory and files
 
-The Datasets page lists datasets and their source records using authenticated Cognee API routes. It can upload files, safely preview text formats up to 1 MiB, download a selected source into app-managed downloads, and delete a selected source or dataset after a target-specific confirmation. Graph requests use `/api/v1/visualize/json` with `full=false` and a maximum of 1,000 nodes. Session DTOs expose only status, timestamps, and bounded summary text; internal traces are not sent to Vue.
+The Datasets page lists datasets and their source records using authenticated Cognee API routes. It can upload files, trigger graph-memory construction with progress polling, safely preview text formats up to 1 MiB, save a selected source through the Windows file dialog, and delete a selected source or dataset after a target-specific confirmation. Uploads and downloads are limited to 200 MiB. Graph requests use `/api/v1/visualize/json` with `full=false` and a maximum of 1,000 nodes. Session DTOs expose only status, timestamps, and bounded summary text; internal traces are not sent to Vue.
 
 The app does not promise cancellation of Cognee ingestion because the current general add route does not offer a corresponding cancellation API. Runtime setup can be cancelled; partial runtime files are preserved for retry.
 
