@@ -17,9 +17,11 @@ from fastmcp.server.http import HostOriginGuardMiddleware
 from fastmcp.server.transforms.search import BM25SearchTransform
 from fastmcp.server.transforms.search.base import BaseSearchTransform
 from mcp import types
+from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
 
 from cognee.modules.storage.utils import JSONEncoder
 
@@ -323,6 +325,63 @@ def _build_http_app(transport: str, host: str, path: str | None = None):
     return app
 
 
+def _build_http_server_app(host: str, port: int, log_level: str):
+    """Build the shared Streamable HTTP app exposed at both supported paths.
+
+    The FastMCP app owns protocol handling and its lifespan. Mounting that same
+    app twice keeps tool registration and session negotiation identical while
+    the outer Starlette app applies CORS and Host/Origin protection to health
+    and both MCP routes.
+    """
+    security_kwargs = _transport_security_kwargs(host)
+    protection = security_kwargs.pop("host_origin_protection", "auto")
+    allowed_hosts = security_kwargs.pop("allowed_hosts", None)
+    allowed_origins = security_kwargs.pop("allowed_origins", None)
+
+    middleware: list[Middleware] = []
+    if protection is not False:
+        middleware.append(
+            Middleware(
+                HostOriginGuardMiddleware,
+                allowed_hosts=allowed_hosts,
+                allowed_origins=allowed_origins,
+                mode="strict" if protection is True else "auto",
+            )
+        )
+    else:
+        logger.warning(
+            "Host/Origin (DNS-rebinding) protection is disabled on the Streamable HTTP "
+            "transport bound to %s.",
+            host,
+        )
+
+    middleware.append(
+        Middleware(
+            CORSMiddleware,
+            allow_origins=_get_cors_origins(),
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    )
+
+    streamable_app = mcp.http_app(
+        transport="streamable-http",
+        path="/",
+        **security_kwargs,
+        host_origin_protection=False,
+    )
+    return Starlette(
+        routes=[
+            Route("/health", health_check, methods=["GET"]),
+            Mount("/mcp-new", app=streamable_app),
+            Mount("/mcp", app=streamable_app),
+        ],
+        middleware=middleware,
+        lifespan=streamable_app.lifespan,
+    )
+
+
 async def _serve_with_cors(
     transport: str, host: str, port: int, log_level: str, path: str | None = None
 ):
@@ -340,6 +399,15 @@ async def _serve_with_cors(
         log_level=log_level.lower(),
     )
     server = uvicorn.Server(config)
+    await server.serve()
+
+
+async def _serve_http_server(host: str, port: int, log_level: str):
+    """Serve the composed dual-route Streamable HTTP app with uvicorn."""
+    app = _build_http_server_app(host, port, log_level)
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=host, port=port, log_level=log_level.lower())
+    )
     await server.serve()
 
 
