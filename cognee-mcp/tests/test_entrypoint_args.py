@@ -43,6 +43,22 @@ def _find_bash() -> str:
     return from_path or "bash"
 
 
+def _uses_wsl_bash() -> bool:
+    bash = _find_bash().lower()
+    return "system32" in bash or bash.endswith("bash.cmd")
+
+
+def _path_for_bash(path: Path) -> str:
+    if _uses_wsl_bash():
+        return subprocess.run(
+            ["wsl.exe", "wslpath", "-u", path.as_posix()],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    return str(path)
+
+
 @pytest.fixture
 def sandbox(tmp_path: Path):
     bin_dir = tmp_path / "bin"
@@ -50,10 +66,12 @@ def sandbox(tmp_path: Path):
     out_file = tmp_path / "argv.json"
 
     fake = bin_dir / "cognee-mcp"
+    python = "/usr/bin/python3" if _uses_wsl_bash() else "python"
     fake.write_text(
         "#!/bin/bash\n"
-        f'python -c "import sys, json; json.dump(sys.argv[1:], open({str(out_file.as_posix())!r}, \'w\'))" "$@"\n',
+        f'{python} -c "import sys, json; json.dump(sys.argv[1:], open({_path_for_bash(out_file)!r}, \'w\'))" "$@"\n',
         encoding="utf-8",
+        newline="\n",
     )
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
@@ -92,8 +110,11 @@ def _run_entrypoint(sandbox, user_args: list[str], extra_env: dict[str, str]) ->
         open(stdout_file, "w", encoding="utf-8") as out,
         open(stderr_file, "w", encoding="utf-8") as err,
     ):
+        entrypoint_arg = (
+            str(ENTRYPOINT) if _find_bash().lower().endswith("bash.cmd") else _path_for_bash(ENTRYPOINT)
+        )
         proc = subprocess.run(
-            [_find_bash(), str(ENTRYPOINT), *user_args],
+            [_find_bash(), entrypoint_arg, *user_args],
             env=env,
             check=False,
             timeout=120,
@@ -127,6 +148,27 @@ def test_runtime_transport_http_wins_over_unset_env(sandbox):
     assert last_value_for(argv, "--port") == "8000"
 
 
+def test_runtime_transport_http_new_uses_new_endpoint_defaults(sandbox):
+    argv = _run_entrypoint(sandbox, ["--transport", "http-new"], {})
+
+    assert last_value_for(argv, "--transport") == "http-new"
+    assert last_value_for(argv, "--host") == "0.0.0.0"
+    assert last_value_for(argv, "--port") == "12316"
+    assert last_value_for(argv, "--path") == "/mcp-new"
+
+
+def test_runtime_args_override_http_new_environment_defaults(sandbox):
+    argv = _run_entrypoint(
+        sandbox,
+        ["--transport", "http-new", "--port", "9000", "--path", "/custom"],
+        {"TRANSPORT_MODE": "http", "HTTP_PORT": "12316"},
+    )
+
+    assert last_value_for(argv, "--transport") == "http-new"
+    assert last_value_for(argv, "--port") == "9000"
+    assert last_value_for(argv, "--path") == "/custom"
+
+
 def test_runtime_args_win_over_env_defaults(sandbox):
     argv = _run_entrypoint(
         sandbox,
@@ -140,3 +182,18 @@ def test_runtime_args_win_over_env_defaults(sandbox):
 def test_env_defaults_unchanged_when_no_runtime_args(sandbox):
     argv = _run_entrypoint(sandbox, [], {"TRANSPORT_MODE": "http"})
     assert argv == ["--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+
+
+def test_env_http_new_uses_new_endpoint_defaults(sandbox):
+    argv = _run_entrypoint(sandbox, [], {"TRANSPORT_MODE": "http-new"})
+
+    assert argv == [
+        "--transport",
+        "http-new",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "12316",
+        "--path",
+        "/mcp-new",
+    ]

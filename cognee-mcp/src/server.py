@@ -325,7 +325,9 @@ def _build_http_app(transport: str, host: str, path: str | None = None):
     return app
 
 
-def _build_http_server_app(host: str, port: int, log_level: str):
+def _build_http_server_app(
+    host: str, port: int, log_level: str, path: str = "/mcp-new"
+):
     """Build the shared Streamable HTTP app exposed at both supported paths.
 
     The FastMCP app owns protocol handling and its lifespan. Mounting that same
@@ -374,7 +376,7 @@ def _build_http_server_app(host: str, port: int, log_level: str):
     return Starlette(
         routes=[
             Route("/health", health_check, methods=["GET"]),
-            Mount("/mcp-new", app=streamable_app),
+            Mount(path, app=streamable_app),
             Mount("/mcp", app=streamable_app),
         ],
         middleware=middleware,
@@ -402,9 +404,9 @@ async def _serve_with_cors(
     await server.serve()
 
 
-async def _serve_http_server(host: str, port: int, log_level: str):
+async def _serve_http_server(host: str, port: int, log_level: str, path: str = "/mcp-new"):
     """Serve the composed dual-route Streamable HTTP app with uvicorn."""
-    app = _build_http_server_app(host, port, log_level)
+    app = _build_http_server_app(host, port, log_level, path)
     server = uvicorn.Server(
         uvicorn.Config(app, host=host, port=port, log_level=log_level.lower())
     )
@@ -1131,7 +1133,7 @@ async def main():
 
     parser.add_argument(
         "--transport",
-        choices=["sse", "stdio", "http"],
+        choices=["sse", "stdio", "http", "http-new"],
         default="stdio",
         help="Transport to use for communication with the client. (default: stdio)",
     )
@@ -1146,15 +1148,15 @@ async def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port to bind the HTTP server to (default: 8000)",
+        default=None,
+        help="Port to bind the HTTP server to (default: 12316 for http-new, otherwise 8000)",
     )
 
     parser.add_argument(
         "--path",
         default=None,
-        help="Path for the MCP HTTP endpoint. Defaults per transport: /mcp for "
-        "http, /sse for sse. Applies to http and sse only; ignored for stdio.",
+        help="Path for the MCP endpoint. Defaults: /mcp-new for http-new, /mcp "
+        "for http, and /sse for sse. Applies to HTTP/SSE transports; ignored for stdio.",
     )
 
     parser.add_argument(
@@ -1231,7 +1233,7 @@ async def main():
     )
 
     host = args.host
-    port = int(args.port)
+    port = int(args.port if args.port is not None else (12316 if args.transport == "http-new" else 8000))
     apply_tool_mode(args.tool_mode)
 
     # Resolve cloud connection: CLI args take precedence over env vars
@@ -1286,6 +1288,15 @@ async def main():
                     f"Running MCP server with Streamable HTTP transport on {host}:{port}{http_path}"
                 )
                 await _serve_with_cors("http", host, port, args.log_level, args.path)
+            case "http-new":
+                http_path = args.path or "/mcp-new"
+                logger.info(
+                    "Running FastMCP 4 Streamable HTTP on %s:%s%s (legacy /mcp retained)",
+                    host,
+                    port,
+                    http_path,
+                )
+                await _serve_http_server(host, port, args.log_level, http_path)
             case _:
                 logger.info("Running MCP server with stdio")
                 # show_banner=False: the banner is cosmetic and its version check

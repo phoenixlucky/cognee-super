@@ -37,7 +37,7 @@ Build memory for Agents and query from any client that speaks MCP – in your t
 
 ## ✨ Features
 
-- Multiple transports – choose Streamable HTTP --transport http (recommended for web deployments), SSE --transport sse (real‑time streaming), or stdio (classic pipe, default)
+- Multiple transports – choose FastMCP 4 Streamable HTTP `--transport http-new` (local default `127.0.0.1:12316/mcp-new`), legacy Streamable HTTP `--transport http`, SSE `--transport sse`, or stdio (classic pipe, default)
 - **Cloud Mode** – connect to [Cognee Cloud](https://www.cognee.ai) via `--serve-url` or `COGNEE_SERVICE_URL` env var (see [Connection Modes](#-connection-modes))
 - **API Mode** – connect to an already running Cognee FastAPI server (see [Connection Modes](#-connection-modes))
 - **Minimal Memory API** – exposes only `remember`, `recall`, and `forget` for agent memory workflows
@@ -97,7 +97,12 @@ Supported operations are `query_facts`, `explore`, `traverse`, `find_path`, `imp
     ```
     python src/server.py --transport sse
     ```
-    or run with Streamable HTTP transport (recommended for web deployments)
+    or run the FastMCP 4 Streamable HTTP endpoint
+    ```
+    python src/server.py --transport http-new
+    ```
+    This listens on `127.0.0.1:12316/mcp-new` and also keeps `/mcp` available on the same server.
+    To keep the previous standalone HTTP mode and its port, use:
     ```
     python src/server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
     ```
@@ -127,6 +132,8 @@ If you'd rather run cognee-mcp in a container, you have two options:
       ```bash
       # For HTTP transport (recommended for web deployments)
       docker run -e TRANSPORT_MODE=http --env-file ./.env -p 8000:8000 --rm -it cognee/cognee-mcp:main
+      # For FastMCP 4 Streamable HTTP (`/mcp-new`, with `/mcp` compatibility)
+      docker run -e TRANSPORT_MODE=http-new --env-file ./.env -p 12316:12316 --rm -it cognee/cognee-mcp:main
       # For SSE transport
       docker run -e TRANSPORT_MODE=sse --env-file ./.env -p 8000:8000 --rm -it cognee/cognee-mcp:main
       # For stdio transport (default)
@@ -354,6 +361,16 @@ cognee-sse: http://localhost:8000/sse (SSE) - ✓ Connected
 ```
 
 ### **HTTP Transport Configuration** (Recommended)
+
+For the FastMCP 4 protocol endpoint, start with `TRANSPORT_MODE=http-new` in Docker or
+`--transport http-new` when running the Python command directly. The default client URL is
+`http://127.0.0.1:12316/mcp-new`; `/mcp` remains available on this server for older clients.
+Use `HTTP_PORT` or `--port` to change the port, and `HTTP_PATH` or `--path` to change the
+`/mcp-new` route. The older standalone `http` mode remains at `/mcp` on port `8000` by default.
+
+The server negotiates protocol versions per client: FastMCP 4 clients can use MCP protocol
+`2026-07-28`, and older clients continue to negotiate a protocol revision they support. The
+server does not enable the optional MCP Tasks extension.
 
 **Start the server with HTTP transport:**
 ```bash

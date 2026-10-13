@@ -69,9 +69,20 @@ ARGS=(--transport "$EFFECTIVE_TRANSPORT")
 
 # Bind-arg defaults follow the effective transport (stdio has no HTTP server)
 if [ "$EFFECTIVE_TRANSPORT" != "stdio" ]; then
-    HTTP_PORT=${HTTP_PORT:-8000}
+    if [ "$EFFECTIVE_TRANSPORT" = "http-new" ]; then
+        HTTP_PORT=${HTTP_PORT:-12316}
+    else
+        HTTP_PORT=${HTTP_PORT:-8000}
+    fi
     echo "HTTP port: $HTTP_PORT"
     ARGS+=("--host" "0.0.0.0" "--port" "$HTTP_PORT")
+
+    if [ "$EFFECTIVE_TRANSPORT" = "http-new" ]; then
+        HTTP_PATH=${HTTP_PATH:-/mcp-new}
+        ARGS+=("--path" "$HTTP_PATH")
+    elif [ -n "$HTTP_PATH" ]; then
+        ARGS+=("--path" "$HTTP_PATH")
+    fi
 fi
 
 echo "Starting Cognee MCP Server with transport mode: $EFFECTIVE_TRANSPORT"

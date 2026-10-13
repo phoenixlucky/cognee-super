@@ -13,6 +13,15 @@ def test_composed_http_app_mounts_one_mcp_app_at_both_paths():
     assert any(getattr(route, "path", None) == "/health" for route in app.routes)
 
 
+def test_composed_http_app_allows_custom_new_endpoint_path():
+    app = server._build_http_server_app(
+        host="127.0.0.1", port=12316, log_level="info", path="/custom-mcp"
+    )
+
+    mounts = {route.path for route in app.routes if isinstance(route, Mount)}
+    assert mounts == {"/custom-mcp", "/mcp"}
+
+
 def test_composed_http_app_health_has_cors_and_rejects_foreign_host():
     app = server._build_http_server_app(host="127.0.0.1", port=12316, log_level="info")
 
