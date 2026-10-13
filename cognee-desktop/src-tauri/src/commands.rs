@@ -1053,7 +1053,7 @@ fn value_array(v: Value) -> Vec<Value> {
 #[tauri::command]
 pub async fn list_datasets(state: tauri::State<'_, AppState>) -> Result<Vec<DatasetDto>, AppError> {
     Ok(
-        value_array(api_request(&state, reqwest::Method::GET, "/api/v1/datasets/", None).await?)
+        value_array(api_request(&state, reqwest::Method::GET, "/api/v1/datasets", None).await?)
             .iter()
             .filter_map(|v| {
                 Some(DatasetDto {
@@ -1083,7 +1083,7 @@ pub async fn create_dataset(
     api_request(
         &state,
         reqwest::Method::POST,
-        "/api/v1/datasets/",
+        "/api/v1/datasets",
         Some(json!({"name":name})),
     )
     .await?;
