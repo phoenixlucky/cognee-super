@@ -55,8 +55,13 @@ jobs:
           $installer = Get-ChildItem cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated' }
           ./cognee-desktop/scripts/sign-installer.ps1 -InstallerPath $installer.FullName
+      - name: Package portable ZIP
+        shell: pwsh
+        run: ./cognee-desktop/scripts/package-portable.ps1 -BuildDirectory cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release
       - uses: actions/upload-artifact@v4
         with:
           name: cognee-desktop-windows-x64
-          path: cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          path: |
+            cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            cognee-desktop/packages/*.zip
           if-no-files-found: error

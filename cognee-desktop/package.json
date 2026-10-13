@@ -9,6 +9,7 @@
     "typecheck": "vue-tsc --noEmit",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "package:portable": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
     "test:unit": "vitest run"
   },
   "dependencies": {

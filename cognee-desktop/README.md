@@ -28,6 +28,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --test secrets
 
 Build the Windows x64 NSIS installer with `npm run tauri:build`. The packaging scripts refresh the MCP source snapshot from this repository and verify the bundled uv executable before building.
 
+Create a no-installer portable ZIP from a completed release build with `npm run package:portable`. The ZIP contains the desktop executable, uv, and the locked MCP runtime files. Extract it to a writable folder and start `Cognee Desktop.exe`. App data and credentials remain in the current Windows user's app-data directory and Credential Manager, so the ZIP itself can be moved but does not carry memory data between PCs.
+
 ## First launch and runtime
 
 The installer bundles the Tauri application, the Cognee MCP source snapshot, its checked-in `uv.lock`, and uv 0.11.19. It does not bundle Python or the Python wheels. On first setup, uv installs CPython 3.12.10 into Cognee Desktop's app-data directory and runs `uv sync --locked` there. This keeps Python packages out of system Python and the user's PATH.

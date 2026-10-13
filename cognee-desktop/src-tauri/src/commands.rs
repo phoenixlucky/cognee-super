@@ -1050,6 +1050,23 @@ fn value_array(v: Value) -> Vec<Value> {
         .or_else(|| v.get("items").and_then(Value::as_array).cloned())
         .unwrap_or_default()
 }
+fn data_size_bytes(value: &Value) -> Option<u64> {
+    value
+        .get("data_size")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("dataSize").and_then(Value::as_u64))
+}
+fn session_summary(value: &Value, max_chars: usize) -> String {
+    value
+        .get("summary")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("label").and_then(Value::as_str))
+        .or_else(|| value.get("agent_id").and_then(Value::as_str))
+        .unwrap_or("")
+        .chars()
+        .take(max_chars)
+        .collect()
+}
 #[tauri::command]
 pub async fn list_datasets(state: tauri::State<'_, AppState>) -> Result<Vec<DatasetDto>, AppError> {
     Ok(
@@ -1139,7 +1156,7 @@ pub async fn list_data(
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .into(),
-                size: v.get("data_size").and_then(Value::as_u64),
+                size: data_size_bytes(v),
                 created_at: v
                     .get("created_at")
                     .and_then(Value::as_str)
@@ -1467,7 +1484,9 @@ pub async fn get_graph(
     if let Some(q) = query {
         if !q.trim().is_empty() {
             if q.chars().count() > 2000 {
-                return Err(AppError::Config("Graph search is limited to 2,000 characters".into()));
+                return Err(AppError::Config(
+                    "Graph search is limited to 2,000 characters".into(),
+                ));
             }
             path.push_str("&query=");
             path.push_str(&url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>());
@@ -1541,13 +1560,7 @@ pub async fn list_sessions(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .into(),
-            summary: v
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .chars()
-                .take(300)
-                .collect(),
+            summary: session_summary(v, 300),
             status: v
                 .get("effective_status")
                 .or_else(|| v.get("status"))
@@ -1583,11 +1596,13 @@ pub async fn get_session(
     state: tauri::State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionDetailDto, AppError> {
-    if session_id.is_empty() || session_id.chars().count() > 200 || session_id.chars().any(char::is_control) {
+    if session_id.is_empty()
+        || session_id.chars().count() > 200
+        || session_id.chars().any(char::is_control)
+    {
         return Err(AppError::Config("Invalid session id".into()));
     }
-    let id =
-        url::form_urlencoded::byte_serialize(session_id.as_bytes()).collect::<String>();
+    let id = url::form_urlencoded::byte_serialize(session_id.as_bytes()).collect::<String>();
     let v = api_request(
         &state,
         reqwest::Method::GET,
@@ -1596,14 +1611,8 @@ pub async fn get_session(
     )
     .await?;
     Ok(SessionDetailDto {
-        session_id: id.to_string(),
-        summary: v
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .chars()
-            .take(1000)
-            .collect(),
+        session_id,
+        summary: session_summary(&v, 1000),
         status: v
             .get("effective_status")
             .or_else(|| v.get("status"))
@@ -1627,4 +1636,26 @@ pub async fn get_session(
             .unwrap_or("")
             .into(),
     })
+}
+
+#[cfg(test)]
+mod dto_mapping_tests {
+    use super::{data_size_bytes, session_summary};
+    use serde_json::json;
+
+    #[test]
+    fn data_size_accepts_cognee_camel_case_field() {
+        assert_eq!(data_size_bytes(&json!({"dataSize": 512})), Some(512));
+        assert_eq!(
+            data_size_bytes(&json!({"data_size": null, "dataSize": 512})),
+            Some(512)
+        );
+    }
+
+    #[test]
+    fn session_summary_uses_safe_api_label_when_summary_is_missing() {
+        let row =
+            json!({"summary": null, "label": "A safe session label", "traces": ["private trace"]});
+        assert_eq!(session_summary(&row, 100), "A safe session label");
+    }
 }
