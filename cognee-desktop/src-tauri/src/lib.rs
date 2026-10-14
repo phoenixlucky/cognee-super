@@ -43,11 +43,12 @@ pub fn run() {
     };
 
     let shutting_down = Arc::new(AtomicBool::new(false));
+    let shutdown_for_tray = shutting_down.clone();
     let shutdown_once = shutting_down.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::default())
-        .setup(|app| {
+        .setup(move |app| {
             let show = MenuItem::with_id(
                 app,
                 "show-window",
@@ -64,15 +65,29 @@ pub fn run() {
             TrayIconBuilder::new()
                 .icon(icon)
                 .menu(&menu)
-                .on_menu_event(|app, event| match tray_action(event.id().as_ref()) {
-                    TrayAction::Show => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                .on_menu_event(move |app, event| {
+                    if shutdown_for_tray.load(Ordering::SeqCst) {
+                        return;
                     }
-                    TrayAction::Quit => app.exit(0),
-                    TrayAction::Ignore => {}
+                    match tray_action(event.id().as_ref()) {
+                        TrayAction::Show => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        TrayAction::Quit => {
+                            if !shutdown_for_tray.swap(true, Ordering::SeqCst) {
+                                let app = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let state = app.state::<state::AppState>();
+                                    let _ = commands::stop_all(state).await;
+                                    app.exit(0);
+                                });
+                            }
+                        }
+                        TrayAction::Ignore => {}
+                    }
                 })
                 .build(app)?;
             Ok(())
@@ -109,13 +124,8 @@ pub fn run() {
         .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                if !shutdown_once.swap(true, Ordering::SeqCst) {
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let state = app.state::<state::AppState>();
-                        let _ = commands::stop_all(state).await;
-                        app.exit(0);
-                    });
+                if !shutdown_once.load(Ordering::SeqCst) {
+                    let _ = window.hide();
                 }
             }
         })

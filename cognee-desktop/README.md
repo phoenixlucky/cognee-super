@@ -46,6 +46,8 @@ Python, the virtual environment, Cognee data, config, downloads, and logs are st
 
 Start the API first; MCP becomes available after the API passes its health check and the client provisions a protected API key. Both listeners bind to loopback. A port conflict is shown without terminating the process that already owns that port. The dashboard and MCP page show the current endpoint and tool list.
 
+Closing the main window hides Cognee Desktop to the Windows notification area, and the API and MCP services keep running. Use **打开 Cognee Desktop** in the tray menu to restore the window. Use **退出** in the tray menu to stop both services and exit the application.
+
 Ingestion may need an LLM provider. Local embedding support is included by Cognee's locked dependency set. Enter model credentials in Settings; secret values are write-only in the UI and saved in Windows Credential Manager. The generated local account password, JWT signing secret, and MCP API key use the same protected store. No plaintext environment file is created.
 
 ## Memory and files
