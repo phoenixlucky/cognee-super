@@ -272,8 +272,10 @@ pub async fn get_app_status(
         *cfg = AppConfig::load(&path);
     }
     if let Ok(mut runtime) = state.runtime_status.lock() {
-        if data.join("runtime/.venv/Scripts/python.exe").exists() {
+        if runtime_has_fastembed(&data.join("runtime")) {
             *runtime = RuntimeState::Ready;
+        } else if *runtime == RuntimeState::Ready {
+            *runtime = RuntimeState::Missing;
         }
     }
     let mut processes = state.process.lock().await;
@@ -495,7 +497,7 @@ pub async fn prepare_runtime(
             .arg("3.12.10")
             .env("UV_PYTHON_INSTALL_DIR", &python_dir)
             .env("UV_CACHE_DIR", &cache)
-            .env("UV_PROJECT_ENVIRONMENT", venv)
+            .env("UV_PROJECT_ENVIRONMENT", &venv)
             .current_dir(&runtime);
         let output = bootstrap_output(sync, &cancel).await?;
         if !output.status.success() {
@@ -508,6 +510,17 @@ pub async fn prepare_runtime(
             );
             return Err(AppError::Bootstrap(
                 "Cognee dependencies could not be installed. Review logs and retry.".into(),
+            ));
+        }
+        let python = venv.join("Scripts/python.exe");
+        if !fastembed_importable(&python).await {
+            push_log(
+                &state,
+                "FastEmbed is still unavailable after locked dependency sync".into(),
+            );
+            return Err(AppError::Bootstrap(
+                "FastEmbed is still unavailable after runtime repair. Review logs and retry."
+                    .into(),
             ));
         }
         Ok(())
@@ -546,6 +559,26 @@ fn runtime_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), AppError> {
     let (_, data) = app_paths(app)?;
     Ok((data.join("runtime/.venv/Scripts/python.exe"), data))
 }
+
+fn runtime_has_fastembed(runtime_dir: &Path) -> bool {
+    runtime_dir.join(".venv/Scripts/python.exe").is_file()
+        && runtime_dir
+            .join(".venv/Lib/site-packages/fastembed/__init__.py")
+            .is_file()
+}
+
+async fn fastembed_importable(python: &Path) -> bool {
+    Command::new(python)
+        .args(["-c", "import fastembed"])
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
+fn runtime_needs_repair(python_exists: bool, fastembed_importable: bool) -> bool {
+    !python_exists || !fastembed_importable
+}
+
 fn random_secret() -> String {
     Uuid::new_v4().to_string() + &Uuid::new_v4().to_string()
 }
@@ -603,13 +636,22 @@ pub async fn start_api(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<StatusDto, AppError> {
-    if !runtime_paths(&app)?.0.exists() {
+    let (python, _) = runtime_paths(&app)?;
+    let python_exists = python.is_file();
+    let importable = python_exists && fastembed_importable(&python).await;
+    if runtime_needs_repair(python_exists, importable) {
         prepare_runtime(app.clone(), state.clone()).await?;
+    }
+    let (python, data) = runtime_paths(&app)?;
+    if !fastembed_importable(&python).await {
+        let _ = set_state(&state.runtime_status, RuntimeState::Failed);
+        return Err(AppError::Bootstrap(
+            "FastEmbed could not be imported after runtime repair. Review logs and retry.".into(),
+        ));
     }
     let c = config_snapshot(&state)?;
     ensure_port_free(c.api_port)?;
     set_state(&state.api_status, RunState::Starting)?;
-    let (python, data) = runtime_paths(&app)?;
     if !python.exists() {
         set_state(&state.api_status, RunState::Failed)?;
         return Err(AppError::Bootstrap(
@@ -1657,5 +1699,50 @@ mod dto_mapping_tests {
         let row =
             json!({"summary": null, "label": "A safe session label", "traces": ["private trace"]});
         assert_eq!(session_summary(&row, 100), "A safe session label");
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::{runtime_has_fastembed, runtime_needs_repair};
+    use std::{fs, path::PathBuf};
+    use uuid::Uuid;
+
+    #[test]
+    fn runtime_is_not_ready_when_fastembed_is_missing() {
+        let runtime_dir: PathBuf = std::env::temp_dir()
+            .join("cognee-runtime-readiness")
+            .join(Uuid::new_v4().to_string());
+        let python = runtime_dir.join(".venv/Scripts/python.exe");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::write(&python, b"test interpreter").unwrap();
+
+        assert!(!runtime_has_fastembed(&runtime_dir));
+
+        fs::remove_dir_all(runtime_dir).unwrap();
+    }
+
+    #[test]
+    fn runtime_is_ready_when_python_and_fastembed_are_present() {
+        let runtime_dir: PathBuf = std::env::temp_dir()
+            .join("cognee-runtime-readiness")
+            .join(Uuid::new_v4().to_string());
+        let python = runtime_dir.join(".venv/Scripts/python.exe");
+        let fastembed = runtime_dir.join(".venv/Lib/site-packages/fastembed/__init__.py");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::create_dir_all(fastembed.parent().unwrap()).unwrap();
+        fs::write(&python, b"test interpreter").unwrap();
+        fs::write(&fastembed, b"test package").unwrap();
+
+        assert!(runtime_has_fastembed(&runtime_dir));
+
+        fs::remove_dir_all(runtime_dir).unwrap();
+    }
+
+    #[test]
+    fn runtime_repair_is_selected_for_missing_or_unimportable_python() {
+        assert!(runtime_needs_repair(false, false));
+        assert!(runtime_needs_repair(true, false));
+        assert!(!runtime_needs_repair(true, true));
     }
 }
