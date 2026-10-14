@@ -4,18 +4,79 @@ mod error;
 pub mod secrets;
 mod state;
 
+#[cfg(test)]
+mod tray_tests {
+    use super::{TrayAction, tray_action};
+
+    #[test]
+    fn tray_action_maps_show_quit_and_unknown_ids() {
+        assert_eq!(tray_action("show-window"), TrayAction::Show);
+        assert_eq!(tray_action("quit"), TrayAction::Quit);
+        assert_eq!(tray_action("unexpected"), TrayAction::Ignore);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TrayAction {
+    Show,
+    Quit,
+    Ignore,
+}
+
+fn tray_action(id: &str) -> TrayAction {
+    match id {
+        "show-window" => TrayAction::Show,
+        "quit" => TrayAction::Quit,
+        _ => TrayAction::Ignore,
+    }
+}
+
 pub fn run() {
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    use tauri::Manager;
+    use tauri::{
+        Manager,
+        menu::{Menu, MenuItem},
+        tray::TrayIconBuilder,
+    };
 
     let shutting_down = Arc::new(AtomicBool::new(false));
     let shutdown_once = shutting_down.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::default())
+        .setup(|app| {
+            let show = MenuItem::with_id(
+                app,
+                "show-window",
+                "打开 Cognee Desktop",
+                true,
+                None::<&str>,
+            )?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let icon = app
+                .default_window_icon()
+                .ok_or_else(|| std::io::Error::other("default app icon is missing"))?
+                .clone();
+            TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&menu)
+                .on_menu_event(|app, event| match tray_action(event.id().as_ref()) {
+                    TrayAction::Show => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    TrayAction::Quit => app.exit(0),
+                    TrayAction::Ignore => {}
+                })
+                .build(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_status,
             commands::save_settings,
