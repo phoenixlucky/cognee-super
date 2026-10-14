@@ -272,11 +272,8 @@ pub async fn get_app_status(
         *cfg = AppConfig::load(&path);
     }
     if let Ok(mut runtime) = state.runtime_status.lock() {
-        if runtime_has_fastembed(&data.join("runtime")) {
-            *runtime = RuntimeState::Ready;
-        } else if *runtime == RuntimeState::Ready {
-            *runtime = RuntimeState::Missing;
-        }
+        *runtime =
+            runtime_state_after_check(*runtime, runtime_has_fastembed(&data.join("runtime")));
     }
     let mut processes = state.process.lock().await;
     let api_exited = processes
@@ -577,6 +574,18 @@ async fn fastembed_importable(python: &Path) -> bool {
 
 fn runtime_needs_repair(python_exists: bool, fastembed_importable: bool) -> bool {
     !python_exists || !fastembed_importable
+}
+
+fn runtime_state_after_check(current: RuntimeState, runtime_ready: bool) -> RuntimeState {
+    if current == RuntimeState::Preparing {
+        current
+    } else if runtime_ready {
+        RuntimeState::Ready
+    } else if current == RuntimeState::Ready {
+        RuntimeState::Missing
+    } else {
+        current
+    }
 }
 
 fn random_secret() -> String {
@@ -1704,7 +1713,8 @@ mod dto_mapping_tests {
 
 #[cfg(test)]
 mod runtime_tests {
-    use super::{runtime_has_fastembed, runtime_needs_repair};
+    use super::{runtime_has_fastembed, runtime_needs_repair, runtime_state_after_check};
+    use crate::state::RuntimeState;
     use std::{fs, path::PathBuf};
     use uuid::Uuid;
 
@@ -1744,5 +1754,17 @@ mod runtime_tests {
         assert!(runtime_needs_repair(false, false));
         assert!(runtime_needs_repair(true, false));
         assert!(!runtime_needs_repair(true, true));
+    }
+
+    #[test]
+    fn status_refresh_preserves_preparing_during_runtime_repair() {
+        assert_eq!(
+            runtime_state_after_check(RuntimeState::Preparing, true),
+            RuntimeState::Preparing
+        );
+        assert_eq!(
+            runtime_state_after_check(RuntimeState::Preparing, false),
+            RuntimeState::Preparing
+        );
     }
 }
