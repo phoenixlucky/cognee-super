@@ -488,7 +488,7 @@ pub async fn prepare_runtime(
             json!({"phase":"dependencies","percent":42,"message":"正在同步已锁定的 Cognee 依赖"}),
         );
         let mut sync = Command::new(&uv);
-        sync.args(["sync", "--locked", "--no-dev", "--project"])
+        sync.args(["sync", "--locked", "--no-dev", "--no-editable", "--project"])
             .arg(project)
             .arg("--python")
             .arg("3.12.10")
@@ -510,13 +510,13 @@ pub async fn prepare_runtime(
             ));
         }
         let python = venv.join("Scripts/python.exe");
-        if !fastembed_importable(&python).await {
+        if !runtime_importable(&python).await {
             push_log(
                 &state,
-                "FastEmbed is still unavailable after locked dependency sync".into(),
+                "Required Cognee runtime packages are still unavailable after locked dependency sync".into(),
             );
             return Err(AppError::Bootstrap(
-                "FastEmbed is still unavailable after runtime repair. Review logs and retry."
+                "Required Cognee runtime packages are still unavailable after runtime repair. Review logs and retry."
                     .into(),
             ));
         }
@@ -564,9 +564,9 @@ fn runtime_has_fastembed(runtime_dir: &Path) -> bool {
             .is_file()
 }
 
-async fn fastembed_importable(python: &Path) -> bool {
+async fn runtime_importable(python: &Path) -> bool {
     Command::new(python)
-        .args(["-c", "import fastembed"])
+        .args(["-I", "-c", "import fastembed, src"])
         .status()
         .await
         .is_ok_and(|status| status.success())
@@ -647,15 +647,15 @@ pub async fn start_api(
 ) -> Result<StatusDto, AppError> {
     let (python, _) = runtime_paths(&app)?;
     let python_exists = python.is_file();
-    let importable = python_exists && fastembed_importable(&python).await;
+    let importable = python_exists && runtime_importable(&python).await;
     if runtime_needs_repair(python_exists, importable) {
         prepare_runtime(app.clone(), state.clone()).await?;
     }
     let (python, data) = runtime_paths(&app)?;
-    if !fastembed_importable(&python).await {
+    if !runtime_importable(&python).await {
         let _ = set_state(&state.runtime_status, RuntimeState::Failed);
         return Err(AppError::Bootstrap(
-            "FastEmbed could not be imported after runtime repair. Review logs and retry.".into(),
+            "Required Cognee runtime packages could not be imported after runtime repair. Review logs and retry.".into(),
         ));
     }
     let c = config_snapshot(&state)?;
