@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $BuildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $AppRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$Version = (Get-Content -LiteralPath (Join-Path $AppRoot 'package.json') -Raw | ConvertFrom-Json).version
 $Executable = Join-Path $BuildDirectory 'cognee-desktop.exe'
 $Uv = Join-Path $BuildDirectory 'uv.exe'
 $Runtime = Join-Path $BuildDirectory 'runtime'
@@ -14,7 +15,7 @@ foreach ($Path in @($Executable, $Uv, (Join-Path $Runtime 'pyproject.toml'), (Jo
 }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $Stage = Join-Path $OutputDirectory ".portable-stage-$([guid]::NewGuid().ToString('N'))"
-$Zip = Join-Path $OutputDirectory 'Cognee-Desktop-0.1.0-windows-x64-portable.zip'
+$Zip = Join-Path $OutputDirectory "Cognee-Desktop-$Version-windows-x64-portable.zip"
 if (Test-Path -LiteralPath $Stage) { throw "Portable staging directory already exists: $Stage" }
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 try {
