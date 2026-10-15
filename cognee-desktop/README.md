@@ -28,11 +28,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --test secrets
 
 Build the Windows x64 NSIS installer with `npm run tauri:build`. The packaging scripts refresh the MCP source snapshot from this repository and verify the bundled uv executable before building.
 
-Create a no-installer portable ZIP from a completed release build with `npm run package:portable`. The ZIP contains the desktop executable, uv, and the locked MCP runtime files. Extract it to a writable folder and start `Cognee Desktop.exe`. App data and credentials remain in the current Windows user's app-data directory and Credential Manager, so the ZIP itself can be moved but does not carry memory data between PCs.
+Create a no-installer portable ZIP from a completed release build with `npm run package:portable`. Packaging downloads and includes CPython 3.12.10 and the locked production dependencies in the ZIP. Extract it to a writable folder and start `Cognee Desktop.exe`; first launch does not need to download Python or install packages. App data and credentials remain in the current Windows user's app-data directory and Credential Manager, so the ZIP itself can be moved but does not carry memory data between PCs. Model files may still download when first used.
 
 ## First launch and runtime
 
-The installer bundles the Tauri application, the Cognee MCP source snapshot, its checked-in `uv.lock`, and uv 0.11.19. It does not bundle Python or the Python wheels. On first setup, uv installs CPython 3.12.10 into Cognee Desktop's app-data directory and runs `uv sync --locked` there. This keeps Python packages out of system Python and the user's PATH.
+The installer bundles the Tauri application, the Cognee MCP source snapshot, its checked-in `uv.lock`, and uv 0.11.19. It does not bundle Python or the Python wheels. On first setup, uv installs CPython 3.12.10 into Cognee Desktop's app-data directory and runs `uv sync --locked` there. This keeps Python packages out of system Python and the user's PATH. The portable ZIP bundles the same Python runtime and production dependencies under its `runtime` directory and runs them from there.
 
 First setup needs network access to the Astral uv/Python distribution and the Python package index. The lock resolves 322 package records across supported platforms. Runtime sync excludes the project's development group. As a Windows x64 planning estimate, the current MCP development environment occupies about 2.28 GiB; production runtime size varies with the selected wheels. Keep several GiB free for first setup and its download cache. Runtime cache files stay under app data and can be removed after a successful setup if disk space is needed. Python is installed without creating executable shims in the user's PATH.
 

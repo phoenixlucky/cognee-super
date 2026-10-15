@@ -22,6 +22,23 @@ try {
   Copy-Item -LiteralPath $Executable -Destination (Join-Path $Stage 'Cognee Desktop.exe')
   Copy-Item -LiteralPath $Uv -Destination (Join-Path $Stage 'uv.exe')
   Copy-Item -LiteralPath $Runtime -Destination (Join-Path $Stage 'runtime') -Recurse
+  $PortableRuntime = Join-Path $Stage 'runtime'
+  $PortablePython = Join-Path $PortableRuntime 'python'
+  $PortableVenv = Join-Path $PortableRuntime '.venv'
+  $Cache = Join-Path $env:LOCALAPPDATA 'CogneeDesktop\uv-cache'
+  New-Item -ItemType Directory -Path $Cache -Force | Out-Null
+  $env:UV_PYTHON_INSTALL_DIR = $PortablePython
+  $env:UV_CACHE_DIR = $Cache
+  $env:UV_PROJECT_ENVIRONMENT = $PortableVenv
+  & $Uv python install 3.12.10 --install-dir $PortablePython --no-bin
+  if ($LASTEXITCODE -ne 0) { throw 'Could not bundle CPython 3.12.10 in the portable package.' }
+  & $Uv sync --locked --no-dev --no-editable --project (Join-Path $PortableRuntime 'pyproject.toml') --python 3.12.10
+  if ($LASTEXITCODE -ne 0) { throw 'Could not bundle the locked Cognee dependencies in the portable package.' }
+  $PortablePythonExe = Join-Path $PortableVenv 'Scripts/python.exe'
+  if (-not (Test-Path -LiteralPath $PortablePythonExe -PathType Leaf)) { throw 'The portable Python environment was not created.' }
+  & $PortablePythonExe -I -c 'import fastembed, src'
+  if ($LASTEXITCODE -ne 0) { throw 'The bundled Cognee runtime failed its import check.' }
+  Remove-Item Env:UV_PYTHON_INSTALL_DIR, Env:UV_CACHE_DIR, Env:UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
   Get-ChildItem -LiteralPath (Join-Path $Stage 'runtime') -Directory -Filter '__pycache__' -Recurse | Remove-Item -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $AppRoot 'LICENSES.md') -Destination $Stage
   @'
@@ -29,8 +46,8 @@ Cognee Desktop 便携版（Windows x64）
 
 使用方法：解压到有写入权限的目录，双击“Cognee Desktop.exe”启动。
 
-首次准备 Cognee 运行环境需要联网，并需要为 Python 和依赖包预留数 GiB 空间。
-本便携包免安装，但记忆数据、运行时、配置和日志保存在当前 Windows 用户的应用数据目录；密钥保存在 Windows 凭据管理器，不随 ZIP 搬运。
+本便携包已包含 Python 和 Cognee 运行依赖。首次启动无需下载或安装 Python 依赖。
+本便携包免安装；记忆数据、配置和日志保存在当前 Windows 用户的应用数据目录，密钥保存在 Windows 凭据管理器，不随 ZIP 搬运。
 需要可用的 Microsoft Edge WebView2 Runtime。
 '@ | Set-Content -LiteralPath (Join-Path $Stage '使用说明.txt') -Encoding utf8
   if (Test-Path -LiteralPath $Zip) { Remove-Item -LiteralPath $Zip -Force }

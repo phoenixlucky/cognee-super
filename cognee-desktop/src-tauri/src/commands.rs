@@ -31,6 +31,40 @@ fn app_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), AppError> {
         .map_err(|_| AppError::Config("Cannot locate app data directory".into()))?;
     Ok((config, data))
 }
+
+fn portable_runtime(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    let executable = std::env::current_exe().ok()?;
+    let root = executable.parent()?;
+    let runtime = root.join("runtime");
+    let python = runtime.join(".venv/Scripts/python.exe");
+    let python_home = std::fs::read_dir(runtime.join("python"))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.join("python.exe").is_file())?;
+    if !python.is_file() {
+        return None;
+    }
+    let config = runtime.join(".venv/pyvenv.cfg");
+    let contents = std::fs::read_to_string(&config).ok()?;
+    let home = format!("home = {}", python_home.display());
+    let updated = contents
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("home =") {
+                home.as_str()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if updated != contents {
+        std::fs::write(config, updated).ok()?;
+    }
+    let (_, data) = app_paths(app).ok()?;
+    Some((python, data))
+}
 fn config_snapshot(state: &AppState) -> Result<AppConfig, AppError> {
     state
         .config
@@ -272,8 +306,16 @@ pub async fn get_app_status(
         *cfg = AppConfig::load(&path);
     }
     if let Ok(mut runtime) = state.runtime_status.lock() {
-        *runtime =
-            runtime_state_after_check(*runtime, runtime_has_fastembed(&data.join("runtime")));
+        let runtime_ready = portable_runtime(&app)
+            .and_then(|(python, _)| {
+                python
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::parent)
+                    .map(runtime_has_fastembed)
+            })
+            .unwrap_or_else(|| runtime_has_fastembed(&data.join("runtime")));
+        *runtime = runtime_state_after_check(*runtime, runtime_ready);
     }
     let mut processes = state.process.lock().await;
     let api_exited = processes
@@ -435,6 +477,15 @@ pub async fn prepare_runtime(
     *state.bootstrap_cancel.lock().await = Some(cancel.clone());
     let result: Result<(), AppError> = async {
         let (_, data) = app_paths(&app)?;
+        if let Some((python, _)) = portable_runtime(&app) {
+            if runtime_importable(&python).await {
+                return Ok(());
+            }
+            return Err(AppError::Bootstrap(
+                "Bundled portable runtime is incomplete. Re-extract the portable package and retry."
+                    .into(),
+            ));
+        }
         let runtime = data.join("runtime");
         tokio::fs::create_dir_all(&runtime)
             .await
@@ -460,6 +511,11 @@ pub async fn prepare_runtime(
             ));
         }
         let venv = runtime.join(".venv");
+        if venv.exists() && !venv.join("Scripts/python.exe").is_file() {
+            tokio::fs::remove_dir_all(&venv)
+                .await
+                .map_err(|_| AppError::Bootstrap("Cannot recreate incomplete Python environment".into()))?;
+        }
         let python_dir = runtime.join("python");
         let cache = data.join("uv-cache");
         tokio::fs::create_dir_all(&cache)
@@ -553,6 +609,9 @@ pub async fn prepare_runtime(
 }
 
 fn runtime_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), AppError> {
+    if let Some(runtime) = portable_runtime(app) {
+        return Ok(runtime);
+    }
     let (_, data) = app_paths(app)?;
     Ok((data.join("runtime/.venv/Scripts/python.exe"), data))
 }
