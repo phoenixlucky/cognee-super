@@ -90,6 +90,6 @@ jobs:
 
             The portable ZIP includes CPython 3.12.10 and the locked production runtime, so first launch does not need to download Python or install Python packages. Microsoft Edge WebView2 Runtime is required.
           files: |
-            release-assets/*.exe
-            release-assets/*.zip
+            release-assets/**/*.exe
+            release-assets/**/*.zip
           fail_on_unmatched_files: true
