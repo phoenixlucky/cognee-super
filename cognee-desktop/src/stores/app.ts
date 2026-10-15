@@ -3,11 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AppConfig, AppStatus, LogEntry, McpTool, RunState, RuntimeState } from '../types/app'
 
-const defaults: AppConfig = { apiHost: '127.0.0.1', apiPort: 12315, mcpHost: '127.0.0.1', mcpPort: 12316, dataRoot: '', llmProvider: '', llmModel: '', llmEndpoint: '', embeddingProvider: '', embeddingModel: '', graphDatabaseProvider: 'ladybug', vectorDbProvider: 'lancedb', vectorDbUrl: '' }
+const defaults: AppConfig = { apiHost: '127.0.0.1', apiPort: 12315, mcpHost: '127.0.0.1', mcpPort: 12316, dataRoot: '', llmProvider: 'ollama', llmModel: 'qwen2.5:14b-instruct-q2_K', llmEndpoint: 'http://localhost:11434', embeddingProvider: 'fastembed', embeddingModel: 'BAAI/bge-small-zh-v1.5', graphDatabaseProvider: 'ladybug', vectorDbProvider: 'lancedb', vectorDbUrl: '' }
 async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> { return invoke<T>(name, args) }
 
 export const useAppStore = defineStore('app', {
-  state: () => ({ config: { ...defaults } as AppConfig, configLoaded: false, apiStatus: 'stopped' as RunState, mcpStatus: 'stopped' as RunState, runtimeStatus: 'missing' as RuntimeState, activeWork: false, busy: false, lastError: '', copied: false, tools: [] as McpTool[], logs: [] as string[], bootstrapPercent: 0, bootstrapMessage: '', secrets: { llm: false, embedding: false, vector: false } as Record<string, boolean>, secretInputs: { llm: '', embedding: '', vector: '' } as Record<'llm'|'embedding'|'vector', string> }),
+  state: () => ({ config: { ...defaults } as AppConfig, configLoaded: false, apiStatus: 'stopped' as RunState, mcpStatus: 'stopped' as RunState, runtimeStatus: 'missing' as RuntimeState, activeWork: false, busy: false, lastError: '', copied: false, tools: [] as McpTool[], logs: [] as string[], bootstrapPercent: 0, bootstrapMessage: '', ollamaAvailable: false, ollamaChecking: false, pullingOllamaModel: '', secrets: { llm: false, embedding: false, vector: false } as Record<string, boolean>, secretInputs: { llm: '', embedding: '', vector: '' } as Record<'llm'|'embedding'|'vector', string> }),
   getters: {
     mcpUrl: (s) => `http://${s.config.mcpHost}:${s.config.mcpPort}/mcp-new`,
     legacyMcpUrl: (s) => `http://${s.config.mcpHost}:${s.config.mcpPort}/mcp`,
@@ -19,6 +19,8 @@ export const useAppStore = defineStore('app', {
     applyStatus(status: AppStatus) { this.apiStatus = status.apiStatus; this.mcpStatus = status.mcpStatus; this.runtimeStatus = status.runtimeStatus; this.activeWork = status.activeWork; if (!this.configLoaded) { this.config = { ...this.config, ...status.config }; this.configLoaded = true } this.lastError = status.apiError || status.mcpError || '' },
     async refreshStatus() { try { this.applyStatus(await command<AppStatus>('get_app_status')); await this.refreshSecrets() } catch (e) { this.lastError = String(e) } },
     async refreshSecrets() { try { this.secrets = await command<Record<string,boolean>>('get_settings_summary') } catch {} },
+    async refreshOllamaStatus() { this.ollamaChecking = true; try { this.ollamaAvailable = await command<boolean>('check_ollama') } catch { this.ollamaAvailable = false } finally { this.ollamaChecking = false } },
+    async pullOllamaModel() { const model = this.config.llmModel; this.pullingOllamaModel = model; this.lastError = ''; try { await command('pull_ollama_model', { model }) } catch (e) { this.lastError = String(e) } finally { this.pullingOllamaModel = '' } },
     async run(name: string, service: 'api'|'mcp'|'all' = 'api') { this.busy = true; this.lastError = ''; try { const s = await command<AppStatus>(name); this.applyStatus(s); if(name==='start_mcp') await this.refreshTools() } catch(e) { this.lastError = String(e); if(service==='api')this.apiStatus='failed'; if(service==='mcp')this.mcpStatus='failed' } finally { this.busy = false } },
     startApi() { return this.run('start_api', 'api') }, startMcp() { return this.run('start_mcp', 'mcp') },
     async stopApi() { if (this.activeWork) { const { ElMessageBox } = await import('element-plus'); try { await ElMessageBox.confirm('当前有文件导入或记忆构建任务。停止 API 会中断这些任务。', '确认停止服务', { type: 'warning', confirmButtonText: '停止服务', cancelButtonText: '继续处理' }) } catch { return } } return this.run('stop_api', 'api') },

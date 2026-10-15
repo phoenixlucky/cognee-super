@@ -393,6 +393,69 @@ pub fn save_settings(
         .map_err(|_| AppError::Config("Config lock unavailable".into()))? = c;
     Ok(())
 }
+
+const OLLAMA_MODELS: [&str; 3] = [
+    "qwen2.5:14b-instruct-q2_K",
+    "qwen2.5:14b-instruct-q4_K_M",
+    "qwen2.5:32b-instruct-q4_K_M",
+];
+
+#[tauri::command]
+pub async fn check_ollama() -> bool {
+    Command::new("ollama")
+        .arg("--version")
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub async fn pull_ollama_model(
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    if !OLLAMA_MODELS.contains(&model.as_str()) {
+        return Err(AppError::Config(
+            "Select one of the supported Ollama presets".into(),
+        ));
+    }
+
+    let _active = ActiveWorkGuard::new(&state);
+    let mut command = Command::new("ollama");
+    command
+        .args(["pull", model.as_str()])
+        .kill_on_drop(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = command.spawn().map_err(|_| {
+        AppError::Message("未检测到 Ollama。请先安装 Ollama for Windows，再重新检查。".into())
+    })?;
+    let mut child = track_child(child, &state, "ollama", vec![])?;
+    let status = child
+        .child
+        .wait()
+        .await
+        .map_err(|_| AppError::Message("无法读取 Ollama 下载进程状态".into()))?;
+    if !status.success() {
+        return Err(AppError::Message(format!(
+            "ollama pull 下载失败（退出码 {}），请查看服务日志后重试。",
+            status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "未知".into())
+        )));
+    }
+    push_log(&state, format!("Ollama model ready: {model}"));
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_provider_secret(kind: String, value: String) -> Result<(), AppError> {
     if !["llm", "embedding", "vector"].contains(&kind.as_str()) || value.is_empty() {
@@ -692,7 +755,9 @@ fn provider_env(c: &AppConfig) -> Vec<(String, String)> {
         ("EMBEDDING_API_KEY", "provider.embedding"),
         ("VECTOR_DB_KEY", "provider.vector"),
     ] {
-        if let Ok(Some(v)) = secrets::get_secret(name) {
+        if k == "LLM_API_KEY" && c.llm_provider == "ollama" {
+            e.push((k.into(), "ollama".into()));
+        } else if let Ok(Some(v)) = secrets::get_secret(name) {
             e.push((k.into(), v));
         }
     }
@@ -911,9 +976,10 @@ pub async fn start_mcp(
         }
     };
     let (python, _) = runtime_paths(&app)?;
-    let exe = python.with_file_name("cognee-mcp.exe");
-    let mut cmd = Command::new(exe);
+    let mut cmd = Command::new(python);
     cmd.args([
+        "-m",
+        "src.server",
         "--transport",
         "http-new",
         "--host",
@@ -1037,51 +1103,71 @@ pub async fn list_mcp_tools(
     let key = secrets::get_secret("local.mcp_api_key")?.ok_or_else(|| {
         AppError::Message("MCP API key is unavailable; start the MCP service first".into())
     })?;
-    let req = json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"protocolVersion":"2026-07-28","clientInfo":{"name":"cognee-desktop","version":"0.1.0"},"capabilities":{}}}});
-    let r = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .build()?
-        .post(format!("http://127.0.0.1:{}/mcp-new", c.mcp_port))
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream")
-        .header("x-api-key", key)
-        .json(&req)
-        .send()
-        .await?;
-    if !r.status().is_success() {
-        return Err(AppError::Message(format!(
-            "MCP tools request returned HTTP {}",
-            r.status().as_u16()
-        )));
+        .build()?;
+    let endpoint = format!("http://127.0.0.1:{}/mcp-new", c.mcp_port);
+    let request_meta = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {"name": "cognee-desktop", "version": "0.1.0"}
+    });
+    for (id, method) in [(1, "server/discover"), (2, "tools/list")] {
+        let response = client
+            .post(&endpoint)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2026-07-28")
+            .header("Mcp-Method", method)
+            .header("x-api-key", &key)
+            .json(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":{"_meta":request_meta}}))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(AppError::Message(format!(
+                "MCP {method} request returned HTTP {}",
+                response.status().as_u16()
+            )));
+        }
+        let body =
+            String::from_utf8_lossy(&bounded_body(response, 5 * 1024 * 1024).await?).to_string();
+        let body = body
+            .lines()
+            .find(|line| line.starts_with("data: "))
+            .map(|line| &line[6..])
+            .unwrap_or(&body);
+        let value: Value = serde_json::from_str(body)
+            .map_err(|_| AppError::Message("MCP returned an unsupported tools response".into()))?;
+        if let Some(error) = value.get("error") {
+            return Err(AppError::Message(format!("MCP {method} failed: {error}")));
+        }
+        if method == "tools/list" {
+            let tools = value
+                .pointer("/result/tools")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    AppError::Message("MCP tools/list response has no tools array".into())
+                })?;
+            return Ok(tools
+                .iter()
+                .filter_map(|t| {
+                    Some(ToolDto {
+                        name: t.get("name")?.as_str()?.to_owned(),
+                        description: t
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        input_schema: t.get("inputSchema").cloned().unwrap_or(Value::Null),
+                    })
+                })
+                .collect());
+        }
     }
-    let t = String::from_utf8_lossy(&bounded_body(r, 5 * 1024 * 1024).await?).to_string();
-    let body = t
-        .lines()
-        .find(|l| l.starts_with("data: "))
-        .map(|l| &l[6..])
-        .unwrap_or(&t);
-    let v: Value = serde_json::from_str(body)
-        .map_err(|_| AppError::Message("MCP returned an unsupported tools response".into()))?;
-    let tools = v
-        .pointer("/result/tools")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
     let _ = app;
-    Ok(tools
-        .iter()
-        .filter_map(|t| {
-            Some(ToolDto {
-                name: t.get("name")?.as_str()?.to_owned(),
-                description: t
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-                input_schema: t.get("inputSchema").cloned().unwrap_or(Value::Null),
-            })
-        })
-        .collect())
+    Err(AppError::Message(
+        "MCP tools/list request did not complete".into(),
+    ))
 }
 
 #[derive(Serialize)]

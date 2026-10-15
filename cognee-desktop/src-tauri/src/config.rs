@@ -30,11 +30,11 @@ impl Default for AppConfig {
             mcp_host: "127.0.0.1".into(),
             mcp_port: 12316,
             data_root: String::new(),
-            llm_provider: String::new(),
-            llm_model: String::new(),
-            llm_endpoint: String::new(),
-            embedding_provider: String::new(),
-            embedding_model: String::new(),
+            llm_provider: "ollama".into(),
+            llm_model: "qwen2.5:14b-instruct-q2_K".into(),
+            llm_endpoint: "http://localhost:11434".into(),
+            embedding_provider: "fastembed".into(),
+            embedding_model: "BAAI/bge-small-zh-v1.5".into(),
             graph_database_provider: "ladybug".into(),
             vector_db_provider: "lancedb".into(),
             vector_db_url: String::new(),
@@ -45,10 +45,23 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn load(path: &PathBuf) -> Self {
-        fs::read(path)
+        let mut config: Self = fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let defaults = Self::default();
+        for (value, default) in [
+            (&mut config.llm_provider, defaults.llm_provider),
+            (&mut config.llm_model, defaults.llm_model),
+            (&mut config.llm_endpoint, defaults.llm_endpoint),
+            (&mut config.embedding_provider, defaults.embedding_provider),
+            (&mut config.embedding_model, defaults.embedding_model),
+        ] {
+            if value.trim().is_empty() {
+                *value = default;
+            }
+        }
+        config
     }
     pub fn save(&self, path: &PathBuf) -> Result<(), crate::error::AppError> {
         if self.api_port < 1024 || self.mcp_port < 1024 || self.api_port == self.mcp_port {

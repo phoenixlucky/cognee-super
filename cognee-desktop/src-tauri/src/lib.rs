@@ -95,6 +95,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_app_status,
             commands::save_settings,
+            commands::check_ollama,
+            commands::pull_ollama_model,
             commands::set_provider_secret,
             commands::clear_provider_secret,
             commands::get_settings_summary,
