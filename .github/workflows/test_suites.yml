@@ -96,6 +96,45 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/ci-env:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/ci-env:buildcache,mode=max
 
+  ci-credentials:
+    name: Check optional CI credentials
+    runs-on: ubuntu-latest
+    outputs:
+      has-llm-key: ${{ steps.check.outputs.has-llm-key }}
+      has-provider-keys: ${{ steps.check.outputs.has-provider-keys }}
+      has-aws-keys: ${{ steps.check.outputs.has-aws-keys }}
+    steps:
+      - name: Check configured provider secrets
+        id: check
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_S3_DEV_USER_KEY_ID: ${{ secrets.AWS_S3_DEV_USER_KEY_ID }}
+          AWS_S3_DEV_USER_SECRET_KEY: ${{ secrets.AWS_S3_DEV_USER_SECRET_KEY }}
+        run: |
+          if [[ -n "$LLM_API_KEY" ]]; then
+            echo "has-llm-key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-llm-key=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping provider-backed suites because LLM_API_KEY is not configured."
+          fi
+
+          if [[ -n "$LLM_API_KEY" && -n "$OPENAI_API_KEY" && -n "$GEMINI_API_KEY" && -n "$ANTHROPIC_API_KEY" ]]; then
+            echo "has-provider-keys=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-provider-keys=false" >> "$GITHUB_OUTPUT"
+            echo "Provider-specific LLM suites were skipped because one or more provider keys are not configured."
+          fi
+
+          if [[ -n "$AWS_S3_DEV_USER_KEY_ID" && -n "$AWS_S3_DEV_USER_SECRET_KEY" ]]; then
+            echo "has-aws-keys=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-aws-keys=false" >> "$GITHUB_OUTPUT"
+            echo "S3-backed suites were skipped because the AWS test credentials are not configured."
+          fi
+
   pre-test:
     name: basic checks
     uses: ./.github/workflows/pre_test.yml
@@ -103,8 +142,8 @@ jobs:
   basic-tests:
     name: Basic Tests
     uses: ./.github/workflows/basic_tests.yml
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
     secrets: inherit
@@ -112,8 +151,8 @@ jobs:
   e2e-tests:
     name: End-to-End Tests
     uses: ./.github/workflows/e2e_tests.yml
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
     secrets: inherit
@@ -121,8 +160,8 @@ jobs:
   cli-tests:
     name: CLI Tests
     uses: ./.github/workflows/cli_tests.yml
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
     secrets: inherit
@@ -140,16 +179,16 @@ jobs:
   slow-e2e-tests:
     name: Slow End-to-End Tests
     uses: ./.github/workflows/slow_e2e_tests.yml
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
     secrets: inherit
 
   graph-db-tests:
     name: Graph Database Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/graph_db_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -157,8 +196,8 @@ jobs:
 
   vector-db-tests:
     name: Vector DB Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/vector_db_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -166,17 +205,18 @@ jobs:
 
   example-tests:
     name: Example Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/examples_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+      s3-credentials-available: ${{ needs.ci-credentials.outputs.has-aws-keys == 'true' }}
     secrets: inherit
 
   notebook-tests:
     name: Notebook Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/notebooks_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -185,6 +225,8 @@ jobs:
   different-os-tests-basic:
     name: OS and Python Tests Ubuntu
     uses: ./.github/workflows/test_different_operating_systems.yml
+    needs: [ ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       # The interpreter edges only. Every version-specific fix on dev since
       # 2025-06 was 3.10 (5) or 3.14 (1); none was 3.11/3.12/3.13-only. Those
@@ -205,6 +247,8 @@ jobs:
   different-os-tests-extended:
     name: OS and Python Tests Extended
     uses: ./.github/workflows/test_different_operating_systems.yml
+    needs: [ ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     with:
       python-versions: '["3.13.x"]'
       os: '["macos-15", "windows-latest"]'
@@ -212,8 +256,8 @@ jobs:
 
   llm-tests:
     name: LLM Test Suite
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-provider-keys == 'true' }}
     uses: ./.github/workflows/test_llms.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -221,8 +265,8 @@ jobs:
 
   s3-file-storage-test:
     name: S3 File Storage Test
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' && needs.ci-credentials.outputs.has-aws-keys == 'true' }}
     uses: ./.github/workflows/test_s3_file_storage.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -230,8 +274,8 @@ jobs:
 
   integration-tests:
     name: Run Integration Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/integration_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -259,8 +303,8 @@ jobs:
 
   temporal-graph-tests:
     name: Temporal Graph Test
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/temporal_graph_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -268,8 +312,8 @@ jobs:
 
   search-db-tests:
     name: Search Test on Different DBs
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/search_db_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -284,8 +328,8 @@ jobs:
 
   relational-db-migration-tests:
     name: Relational DB Migration Tests
-    needs: [ build-ci-env ]
-    if: ${{ !cancelled() }}
+    needs: [ build-ci-env, ci-credentials ]
+    if: ${{ needs.ci-credentials.outputs.has-llm-key == 'true' }}
     uses: ./.github/workflows/relational_db_migration_tests.yml
     with:
       ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
@@ -294,6 +338,8 @@ jobs:
   notify:
     name: Test Completion Status
     needs: [
+      build-ci-env,
+      ci-credentials,
       pre-test,
       basic-tests,
       e2e-tests,
@@ -322,33 +368,55 @@ jobs:
     steps:
       - name: Check Status
         run: |
-          if [[ "${{ needs.pre-test.result }}" == "success" &&
-                "${{ needs.basic-tests.result }}" == "success" &&
-                "${{ needs.e2e-tests.result }}" == "success" &&
-                "${{ needs.cli-tests.result }}" == "success" &&
-                "${{ needs.journey-tests.result }}" == "success" &&
-                "${{ needs.slow-e2e-tests.result }}" == "success" &&
-                "${{ needs.graph-db-tests.result }}" == "success" &&
-                "${{ needs.vector-db-tests.result }}" == "success" &&
-                "${{ needs.example-tests.result }}" == "success" &&
-                "${{ needs.notebook-tests.result }}" == "success" &&
-                "${{ needs.different-os-tests-basic.result }}" == "success" &&
-                "${{ needs.different-os-tests-extended.result }}" == "success" &&
-                "${{ needs.llm-tests.result }}" == "success" &&
-                "${{ needs.s3-file-storage-test.result }}" == "success" &&
-                "${{ needs.integration-tests.result }}" == "success" &&
-                "${{ needs.mcp-test.result }}" == "success" &&
-                "${{ needs.docker-compose-test.result }}" == "success" &&
-                "${{ needs.docker-ci-test.result }}" == "success" &&
-                "${{ needs.ui-docker-ci-test.result }}" == "success" &&
-                "${{ needs.temporal-graph-tests.result }}" == "success" &&
-                "${{ needs.search-db-tests.result }}" == "success" &&
-                "${{ needs.relational-db-migration-tests.result }}" == "success" ]]; then
-            echo "All test suites completed successfully!"
+          results=(
+            "${{ needs.build-ci-env.result }}"
+            "${{ needs.pre-test.result }}"
+            "${{ needs.journey-tests.result }}"
+            "${{ needs.mcp-test.result }}"
+            "${{ needs.docker-compose-test.result }}"
+            "${{ needs.docker-ci-test.result }}"
+            "${{ needs.ui-docker-ci-test.result }}"
+          )
+
+          if [[ "${{ needs.ci-credentials.outputs.has-llm-key }}" == "true" ]]; then
+            results+=(
+              "${{ needs.basic-tests.result }}"
+              "${{ needs.e2e-tests.result }}"
+              "${{ needs.cli-tests.result }}"
+              "${{ needs.slow-e2e-tests.result }}"
+              "${{ needs.graph-db-tests.result }}"
+              "${{ needs.vector-db-tests.result }}"
+              "${{ needs.example-tests.result }}"
+              "${{ needs.notebook-tests.result }}"
+              "${{ needs.different-os-tests-basic.result }}"
+              "${{ needs.different-os-tests-extended.result }}"
+              "${{ needs.integration-tests.result }}"
+              "${{ needs.temporal-graph-tests.result }}"
+              "${{ needs.search-db-tests.result }}"
+              "${{ needs.relational-db-migration-tests.result }}"
+            )
+            if [[ "${{ needs.ci-credentials.outputs.has-aws-keys }}" == "true" ]]; then
+              results+=("${{ needs.s3-file-storage-test.result }}")
+            else
+              echo "S3-backed suites were skipped because the AWS test credentials are not configured."
+            fi
           else
-            echo "One or more test suites failed."
-            exit 1
+            echo "Provider-backed suites were skipped because LLM_API_KEY is not configured."
           fi
+
+          if [[ "${{ needs.ci-credentials.outputs.has-provider-keys }}" == "true" ]]; then
+            results+=("${{ needs.llm-tests.result }}")
+          else
+            echo "Provider-specific LLM suites were skipped because one or more provider keys are not configured."
+          fi
+
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "One or more required test suites failed: ${results[*]}"
+              exit 1
+            fi
+          done
+          echo "All runnable test suites completed successfully."
 
   # ── Advisory Claude Code review — pulls the private skill from cognee-ci at runtime ──
   # The rubric + Slack map live in the private cognee-ci repo; this job carries no review

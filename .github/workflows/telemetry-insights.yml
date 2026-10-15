@@ -38,6 +38,7 @@ concurrency:
 
 jobs:
   telemetry-insights:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     permissions:
       contents: read
       issues: write

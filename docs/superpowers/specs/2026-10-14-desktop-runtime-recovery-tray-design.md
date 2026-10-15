@@ -1,7 +1,7 @@
 # Cognee Desktop Runtime Recovery and Tray — Design
 
-**Date:** 2026-10-14  
-**Status:** Approved for planning  
+**Date:** 2026-10-14
+**Status:** Approved for planning
 **Target:** Windows x64 Cognee Desktop
 
 ## Goal

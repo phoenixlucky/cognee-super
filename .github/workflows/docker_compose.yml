@@ -21,6 +21,8 @@ env:
 jobs:
   docker-compose-test:
     runs-on: ubuntu-22.04
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
     steps:
     - name: Checkout repository
@@ -57,7 +59,7 @@ jobs:
         # Only variables that actually have a value: a bare `LLM_ARGS=` (empty
         # secret) reaches LLMConfig.llm_args — a dict field — as "" and kills
         # the container at import time.
-        printenv | grep -E '^(LLM_|EMBEDDING_)[A-Za-z0-9_]*=.+' > .env
+        printenv | grep -E '^(LLM_|EMBEDDING_)[A-Za-z0-9_]*=.+' > .env || true
         echo "EMBEDDING_DIMENSIONS=300" >> .env
         echo "COGNEE_SKIP_CONNECTION_TEST=true" >> .env
         # Point the relational store at the postgres service so the e2e
@@ -176,7 +178,14 @@ jobs:
         echo "$CHUNKS" | grep -qF "$FACT" || { echo "CHUNKS recall missing stored fact"; echo "$CHUNKS"; exit 1; }
         echo "recall (CHUNKS): stored fact retrieved verbatim"
 
-        # End-to-end answer check: the graph-grounded completion must name the entity.
+    - name: Verify graph-grounded answer
+      if: ${{ env.LLM_API_KEY != '' }}
+      run: |
+        TOKEN=$(curl -sf -X POST http://localhost:8000/api/v1/auth/login \
+          -d "username=default_user@example.com&password=${DEFAULT_USER_PASSWORD}" | jq -r .access_token)
+        [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "login failed"; exit 1; }
+
+        # This final answer check requires a live provider; the earlier round-trip is deterministic.
         ANSWER=$(curl -sf -X POST http://localhost:8000/api/v1/recall \
           -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
           -d '{"query":"Who crafted the twin cobalt lanterns of the Vellinge lighthouse, and in which year?","searchType":"GRAPH_COMPLETION","datasets":["compose_smoke"]}')

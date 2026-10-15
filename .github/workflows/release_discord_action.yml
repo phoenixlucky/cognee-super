@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   github-releases-to-discord:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout

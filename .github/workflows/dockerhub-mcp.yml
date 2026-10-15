@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   docker-build-and-push:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     runs-on:
       group: Default
       labels:

@@ -23,6 +23,7 @@ env:
 
 jobs:
   prepare-merged-branches:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     outputs:

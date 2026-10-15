@@ -100,4 +100,3 @@
 - [x] Run the focused protocol tests and resolve compatibility failures without changing tool semantics.
 - [x] Document the recommended endpoint `http://127.0.0.1:12316/mcp-new`, old endpoint, stdio/SSE examples, port override, protocol support, and API-mode environment contract in `cognee-mcp/README.md`.
 - [x] Run the complete MCP test suite and `uv run ruff check src tests` from `cognee-mcp`.
-

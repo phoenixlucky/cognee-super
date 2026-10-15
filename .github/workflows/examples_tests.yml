@@ -19,6 +19,10 @@ on:
         required: false
         type: string
         default: ''
+      s3-credentials-available:
+        required: false
+        type: boolean
+        default: false
 
 env:
   COGNEE_SKIP_CONNECTION_TEST: 'true'
@@ -212,6 +216,7 @@ jobs:
 
   test-s3-permissions-example: # Make sure permission and multi-user mode work with S3 file system
     name: Run Permissions Example
+    if: ${{ inputs.s3-credentials-available }}
     runs-on: ubuntu-22.04
     container: ${{ inputs.ci-image != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', inputs.ci-image, github.actor, github.token)) || null }}
     defaults:

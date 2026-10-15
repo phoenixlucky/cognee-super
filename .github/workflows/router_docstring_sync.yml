@@ -54,6 +54,7 @@ concurrency:
 
 jobs:
   sync-docstrings:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     permissions:
       contents: write
       pull-requests: write

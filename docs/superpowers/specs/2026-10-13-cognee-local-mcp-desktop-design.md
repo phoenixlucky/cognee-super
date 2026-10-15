@@ -1,7 +1,7 @@
 # Cognee Local MCP Desktop — Design Specification
 
-**Date:** 2026-10-13  
-**Status:** Draft for user review  
+**Date:** 2026-10-13
+**Status:** Draft for user review
 **Target:** Windows x64 first release
 
 ## 1. Goal
@@ -162,4 +162,3 @@ Validate while planning/implementing:
 - Which existing API routes cover upload/ingestion progress, raw preview, graph limits, and session details in the exact pinned Cognee release.
 - Tauri plugin choices for OS-protected secrets, auto-updater policy, installer format, code signing, and user-data retention during uninstall.
 - Whether first-run setup downloads packages only, or also model assets; report expected network and disk requirements to the user.
-

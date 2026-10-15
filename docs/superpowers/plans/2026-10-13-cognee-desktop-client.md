@@ -300,4 +300,3 @@
 - [ ] Add Windows CI steps for Rust target installation, locked npm install, `npm run typecheck`, frontend build, Rust `cargo check`, and installer build.
 - [ ] Include dependency license notices for shipped bootstrap/runtime components and document runtime download/licensing responsibilities.
 - [ ] Build the installer on Windows x64 and run a clean-machine smoke check for install, first-run bootstrap, API/MCP startup, stop, upgrade preserving user data, and uninstall retention behavior.
-

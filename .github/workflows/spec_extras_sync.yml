@@ -91,6 +91,7 @@ concurrency:
 
 jobs:
   sync-spec-extras:
+    if: ${{ github.repository == 'topoteretes/cognee' }}
     permissions:
       contents: write
       pull-requests: write
