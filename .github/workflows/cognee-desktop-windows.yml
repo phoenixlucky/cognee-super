@@ -7,6 +7,8 @@ on:
       - 'cognee-desktop/**'
       - 'cognee-mcp/**'
       - '.github/workflows/cognee-desktop-windows.yml'
+    tags:
+      - 'v0.1.*'
 
 jobs:
   windows-x64:
@@ -65,3 +67,28 @@ jobs:
             cognee-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             cognee-desktop/packages/*.zip
           if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v0.1.')
+    needs: windows-x64
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cognee-desktop-windows-x64
+          path: release-assets
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+        with:
+          name: Cognee Desktop ${{ github.ref_name }}
+          body: |
+            Windows x64 desktop client for a local Cognee API and MCP server.
+
+            The portable ZIP includes CPython 3.12.10 and the locked production runtime, so first launch does not need to download Python or install Python packages. Microsoft Edge WebView2 Runtime is required.
+          files: |
+            release-assets/*.exe
+            release-assets/*.zip
+          fail_on_unmatched_files: true
